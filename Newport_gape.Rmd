@@ -17,16 +17,21 @@ library(tidyverse)
 
 ```{r fileLocations, echo=FALSE}
 # Directory path on Lauren's machine
-setwd("~/Documents/Oyster/Rcode")
-NewportDir = '../data/Newport_SSINP/'
-WestcliffEelgrassDir = '../data/Newport_SSINP/Westcliff/Eelgrass/'
+#setwd("~/Documents/Oyster/Rcode")
+
+# Comment out one of the two localpath lines below depending on what computer you're on
+localpath = '../../data/'  # Luke's path
+#localpath = '../data/'  # Lauren's path
+
+NewportDir = paste0(localpath,'Newport_SSINP/')
+WestcliffEelgrassDir = paste0(localpath,'Newport_SSINP/Westcliff/Eelgrass/')
 
 # Collated calibration data from May 2019, used for Nov 2019 + 2020 oyster deployments
-gapecalibfile = '../data/calibration/201905_calibrations.csv'
-combogapefile='../data/combogape/'
+gapecalibfile = paste0(localpath,'Newport_SSINP/calibration/201905_calibrations.csv')
+combogapefile= paste0(localpath,'Newport_SSINP/combinedgape/')
 
 #meta file with serial numbers
-metafile='../data/Newport_SSINP/field_metadata_withedits_2022-2023.csv'
+metafilePath = paste0(localpath,'Newport_SSINP/field_metadata_withedits_2022-2023.csv')
 ```
 
 ```{r gapeFunctions, echo=showcode}
@@ -583,7 +588,7 @@ exciseHall = function(halldata, metadf, maxGapFill = 12) {
 
 ```
 
-```{r concatGape function}
+```{r concatGape_function}
 # This function deals with the GAPE data files that have an unnecessary comma at the end of each row of data, which messes with the read.csv import function
 
 #' Concatenate multiple daily gape files into one data frame
@@ -646,25 +651,28 @@ ConcatGapeFiles <- function(filenames, myTimeZone = 'UTC',verbose=TRUE){
 
 ```
 
-```{r get list of files and make big csv, echo=FALSE}
+```{r get-list-of-files-and-make-big-csv, echo=FALSE}
 # Get a list of the IR heart sensor files by looking for filenames that end in IR.csv
-IRfilenames = dir(path = paste0(NewportDir, WestcliffEelgrassDir, 'SN107_2022-07-13_2022-07-30'), full.names=TRUE, pattern= "*IR.csv")
+#IRfilenames = dir(path = paste0(NewportDir, WestcliffEelgrassDir, 'SN107_2022-07-13_2022-07-30'), 
+#		full.names=TRUE, pattern= "*IR.csv")
 
 # Get a list of gape (and temperature) filenames by looking for filenames that end in GAPE.csv
-gapefiles = dir(path = paste0(NewportDir, WestcliffEelgrassDir, 'SN107'), full.names=TRUE, pattern= "*GAPE.csv")
-# These files tend to have a comma after the last column's data, which makes read.csv think there's one more column of data than there are names in the header row, which then treats the 1st column of POSIXt values as row numbers, which is unfortunate. You need to handle that appropriately. 
+#gapefiles = dir(path = paste0(NewportDir, WestcliffEelgrassDir, 'SN107'), full.names=TRUE, pattern= "*GAPE.csv")
+# These files tend to have a comma after the last column's data, which makes read.csv think there's one more column 
+# of data than there are names in the header row, which then treats the 1st column of POSIXt values as row numbers, 
+# which is unfortunate. You need to handle that appropriately. 
 
-#import csv metadata_with edits.use unique() on first column. Save result as "serialnumber"
-metafile = loadFieldMetaData(filename = 
-         '../data/Newport_SSINP/field_metadata_withedits_2022-2023.csv')
+#import csv metadata_with edits. use unique() on first column. Save result as "serialnumber"
+metafile = loadFieldMetaData(filename = metafilePath)
+
 serialnumber=unique(metafile[,1])
 
-#for loop that says go through SN107 and find all files, combine them together, and spit out combogapefile at end
+# for loop that says go through each serial number in the vector 'serialnumber' and find all files, 
+# combine them together, and spit out combogapefile at end
 ######################################## 
 
 for(i in (serialnumber)){
-  #j=paste0(i,"_GAPE.csv")
-  gapepath=file.path(paste0("../data/Newport_SSINP/alldata/",i))
+  gapepath=file.path(paste0(NewportDir,"alldata/",i))
     if(!file.exists(gapepath)) {
      next
     }
@@ -672,14 +680,15 @@ for(i in (serialnumber)){
   #generate list of file names
   gapecombo=dir(path=gapepath, full.names = TRUE, pattern=paste0(i,"_GAPE.csv"))
     if(length(gapecombo)==0){
-      next
+      next # if there are no data files found, skip to next serial number
     }
   #Use concatgapefiles to combine
   gapedat = ConcatGapeFiles(gapecombo, myTimeZone = 'UTC', verbose = FALSE)
-  #gapedat=ConcatGapeFiles(gapecombo,myTimeZone="UTC",verbose=F)
-  write.csv(gapedat, paste0("../data/Newport_SSINP/combinedgape/", i, "_combogape.csv"), row.names = FALSE)
+
+  write.csv(gapedat, paste0(combogapefile, i, "_combogape.csv"), row.names = FALSE)
+
 }
- #write.csv2(get(serialnumber[i]), paste0("../data/Newport_SSINP", serialnumber[i], "combogape.csv"),gapedat)
+
  
 #concatgapefiles works outside of for loop 
 #gapedat = ConcatGapeFiles(gapecombo, myTimeZone = 'UTC', verbose = FALSE)
@@ -704,21 +713,25 @@ for(i in (serialnumber)){
 # so use value that to extract relevant calibration data from the calibration
 # file stored in calibFileName
 
+# TODO: Recalibrate with BivalveBit boards
+# TODO: Modify calcPercentGapeNLME to account for shifting baseline in the Hall signal as the animal grows 
+
+
 #get data from channel 1 of SN20 to calibrate sensor. Generate set of regression coefficients and put them in cRegress. Use cRegress to do % calculation.
 chNum=1
 cRegress = cRegressEstimate("SN20", chNum,gapecalibfile)
 
 for(i in (serialnumber)){
   #j=paste0(i,"_GAPE.csv")
-  gapepath=file.path(paste0("../data/Newport_SSINP/combinedgape/", i, "_combogape.csv"))
+  gapepath=file.path(paste0(combogapefile, i, "_combogape.csv"))
     if(!file.exists(gapepath)) {
      next
     }
-  #gapdat=read.csv(gapepath)
+  gapedat=read.csv(gapepath)
 	# Convert the Hall effect values into estimated percent gape (0-100%)
 	gapedat[,"hallpercent"] = calcPercentGapeNLME(gapedat[,"Hall"], cRegress, 
 			percentileLim = c(0.01,0.95))
-	write.csv(gapedat, paste0("../data/Newport_SSINP/combinedgape/", i, "_combogape.csv"))
+	write.csv(gapedat, paste0(combogapefile, i, "_combogape.csv"))
 }
 
 #gapeSN = 'SN21'  
@@ -759,10 +772,161 @@ for(i in (serialnumber)){
 ```
 
 #subdivide SN by treatment/site and make plots of gape for each oyster. Import metadata to see which serial number goes to each treatment. 
-```{r}
+```{r GapePlotCheckingFunctions}
+
+# Function to load a particular sensor's Hall effect data. This assumes that a path already exists called combogapefile
+loadComboGape = function(SN) {
+	gape = read.csv(paste0(combogapefile,SN,'_combogape.csv'))
+	gape$DateTime = as.POSIXct(gape$DateTime, tz = 'UTC')
+	gape
+}
+
+# Function to make a quick 2-panel plot of the raw Hall sensor output and the calculate gape percentage
+plot2HallFunction = function(gape){
+	par(mfrow = c(2,1), mar = c(4,6,2,1))
+	plot(gape$DateTime, gape$Hall, type = 'l', col = 3, 
+			ylab = 'Raw Hall counts', 
+			xlab = 'Date',
+			las = 1,
+			main = gape$SN[1])
+	
+	plot(gape$DateTime, gape$hallpercent, type = 'l', col = 2,
+			ylab = 'Gape opening %',
+			xlab = 'Date',
+			las = 1,
+			main = gape$SN[1])
+	
+	par(mfrow=c(1,1))
+}
+
+# Function to only plot the raw Hall effect counts
+plotRawHallFunction = function(gape){
+	par(mfrow = c(1,1), mar = c(4,6,2,1))
+	plot(gape$DateTime, gape$Hall, type = 'l', col = 3, 
+			ylab = 'Raw Hall counts', 
+			xlab = 'Date',
+			las = 1,
+			main = gape$SN[1])
+
+}
+
 
 
 ```
+
+
+```{r testPlotsGape, eval=FALSE}
+
+SN142 = loadComboGape('SN142')
+plot2HallFunction(SN142)
+plotRawHallFunction(SN142)
+
+
+SN191 = loadComboGape('SN191')
+plot2HallFunction(SN191)
+
+
+SN118 = loadComboGape('SN118')
+plot2HallFunction(SN118)
+
+
+SN187 = loadComboGape('SN187')
+plot2HallFunction(SN187)
+
+SN152 = loadComboGape('SN152') # The low hump at Jul 27 is shared with SN176
+plot2HallFunction(SN152)
+
+SN104 = loadComboGape('SN104')
+plot2HallFunction(SN104)
+
+SN176 = loadComboGape('SN176')  # The low hump around Jul 27 is shared with SN152
+plot2HallFunction(SN176)
+
+SN174 = loadComboGape('SN174')
+plot2HallFunction(SN174)
+
+SN130 = loadComboGape('SN130')
+plot2HallFunction(SN130)
+
+SN132 = loadComboGape('SN132')
+plot2HallFunction(SN132)
+
+SN123 = loadComboGape('SN123')
+plot2HallFunction(SN123)
+
+SN150 = loadComboGape('SN150')
+plot2HallFunction(SN150)
+
+SN138 = loadComboGape('SN138')
+plot2HallFunction(SN138)
+
+SN164 = loadComboGape('SN164')  # Weird change in opening limit around Aug 6, like it could no longer open as far. SN164
+plot2HallFunction(SN164)
+
+SN170 = loadComboGape('SN170')
+plot2HallFunction(SN170)
+
+SN115 = loadComboGape('SN115')
+plot2HallFunction(SN115)
+
+SN143 = loadComboGape('SN143') # Some kind of malfunction
+plot2HallFunction(SN143)
+
+SN191 = loadComboGape('SN191')
+plot2HallFunction(SN191)
+
+SN125 = loadComboGape('SN125')  # Listed as dead, maybe why the upper limit shifts down in the last few days?
+plot2HallFunction(SN125)
+
+SN197 = loadComboGape('SN197')
+plot2HallFunction(SN197)
+
+SN153 = loadComboGape('SN153')
+plot2HallFunction(SN153)
+
+SN171 = loadComboGape('SN171') # Strange dip around Aug 1-5
+plot2HallFunction(SN171)
+
+SN112 = loadComboGape('SN112')  # I think this one is saturating the sensor when closed, magnet is too close, baseline closed value is possibly spurious
+plot2HallFunction(SN112)
+
+SN193 = loadComboGape('SN193')  # Bad sensor
+plot2HallFunction(SN193)
+
+SN118 = loadComboGape('SN118') # Maybe died around Aug 9? Or did the magnet fall off? 
+plot2HallFunction(SN118)
+
+SN187 = loadComboGape('SN187')
+plot2HallFunction(SN187)
+
+SN161 = loadComboGape('SN161')
+plot2HallFunction(SN161)
+
+SN157 = loadComboGape('SN157')  # Bad sensor (magnetic field strength saturated probably)
+plot2HallFunction(SN157)
+
+SN144 = loadComboGape('SN144')
+plot2HallFunction(SN144)
+
+SN159 = loadComboGape('SN159') # Different looking pattern than most others
+plot2HallFunction(SN159)
+
+SN148 = loadComboGape('SN148')
+plot2HallFunction(SN148)
+
+SN133 = loadComboGape('SN133')
+plot2HallFunction(SN133)
+
+
+
+
+
+
+```
+
+
+
+
 
 #Use metadata to plot all sensors from oyster treatment (plot hall %, make time series plot). 3 panel plot- seagrass, mud, oyster treatment for De Anza, do for each site. Or all on same plot w/ diff colors for diff treatments. 
 #ideally also align with temp data/tide data. Can be in separate datasets just also needs to have POSIXxt to align timestamps. 
