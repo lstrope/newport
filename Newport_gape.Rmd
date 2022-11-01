@@ -17,11 +17,11 @@ library(tidyverse)
 
 ```{r fileLocations, echo=FALSE}
 # Directory path on Lauren's machine
-#setwd("~/Documents/Oyster/Rcode")
+setwd("~/Documents/Oyster/Rcode")
 
 # Comment out one of the two localpath lines below depending on what computer you're on
-localpath = '../../data/'  # Luke's path
-#localpath = '../data/'  # Lauren's path
+#localpath = '../../data/'  # Luke's path
+localpath = '../data/'  # Lauren's path
 
 NewportDir = paste0(localpath,'Newport_SSINP/')
 WestcliffEelgrassDir = paste0(localpath,'Newport_SSINP/Westcliff/Eelgrass/')
@@ -31,7 +31,7 @@ gapecalibfile = paste0(localpath,'Newport_SSINP/calibration/201905_calibrations.
 combogapefile= paste0(localpath,'Newport_SSINP/combinedgape/')
 
 #meta file with serial numbers
-metafilePath = paste0(localpath,'Newport_SSINP/field_metadata_withedits_2022-2023.csv')
+metafilePath = paste0(localpath,'Newport_SSINP/metadata/')
 ```
 
 ```{r gapeFunctions, echo=showcode}
@@ -127,6 +127,68 @@ gapBounds <- function (values){
 	} # end of if (numgaps > 1)
 	results	# return the results dataframe, 2 columns Start and End
 }
+
+################################################################################
+### gapBounds2 function
+#' Function that sets bounds for upper and lower limit of hall counts to calculate gape opening % while dealing with growth rates. Change chunk length to certain number of days (hall count rows) (arbitrary 5 days). Use gapbounds function to set new ranges. 
+#' @param mygaps A datafrom from gapbounds function
+#' @param maxrow Max length of rows (time) to subset out 
+
+gapBounds2=function(mygaps, maxrow){
+  mydiff=mygaps$End[1]-mygaps$Start[1]
+  if (mydiff>maxrow){
+    quotient=mydiff/maxrow #quotient=number of subsets (chunks) to make based on max row
+    nloops = floor(quotient)
+    
+    for (i in 1:nloops){
+      if (i == 1){
+        mygaps2 = data.frame(Start = mygaps$Start[1], End = maxrow)
+      } else if (i > 1 & i < nloops){
+        temp = data.frame(Start = mygaps2$End[i-1]+1, End = mygaps2$End[i-1]+maxrow )
+        mygaps2 = rbind(mygaps2, temp)
+      } else if (i > 1 & i == nloops){
+        temp = data.frame(Start = mygaps2$End[i-1]+1, End = mygaps$End[1])
+        mygaps2 = rbind(mygaps2, temp)
+      }
+    }
+  } else if (mydiff <= maxrow){
+    # Handle the case where the 1st entry in mygaps is shorter than maxrow, just copy the values
+    # over to a dataframe we're calling mygaps2
+    mygaps2 = data.frame(Start = mygaps$Start[1], End = mygaps$End[1])
+  }
+  # Handle cases where there is more than a single row in mygaps
+  if (nrow(mygaps) > 1) {
+    for (j in 2:nrow(mygaps)){
+      mydiff=mygaps$End[j]-mygaps$Start[j]
+      if (mydiff>maxrow){
+        quotient=mydiff/maxrow #quotient=number of subsets (chunks) to make based on max row
+        nloops = floor(quotient)
+        
+        for (i in nloops){
+          if (i == 1){
+            temp = data.frame(Start = mygaps$Start[j], End = maxrow)
+            mygaps2 = rbind(mygaps2, temp)
+          } else if (i > 1 & i < nloops){
+            temp = data.frame(Start = mygaps2$End[nrow(mygaps2)]+1, End = mygaps2$End[nrow(mygaps2)]+maxrow )
+            mygaps2 = rbind(mygaps2, temp)
+          } else if (i == nloops){
+            temp = data.frame(Start = mygaps2$End[nrow(mygaps2)]+1, End = mygaps$End[j])
+            mygaps2 = rbind(mygaps2, temp)
+          }
+        }
+      } else {
+        # handle the case where the next entry in mygaps is shorter than maxrow, just copy the start/end from 
+        # mygaps into mygaps2
+        mygaps2 = rbind(mygaps2, mygaps[j,])
+      }
+    }
+  }
+  mygaps2 # return this data frame at the end of the function
+  
+}
+
+
+
 
 ################################################################################
 ### hallFilter function
@@ -247,30 +309,12 @@ percentileRange <- function (Hallvec, percentileLim = c(0.01,0.99)){
 ################################################################################
 ### calcPercentGapeNLME function
 # Use this function to calculate the percentage gape (0-100%)
-# This calculates the baseline fully-closed and fully-open values based
-# on the upper and lower 1% of hall effect sensor data for the given range
-# of rows in the input dataset. 
-# Supply a vector of Hall effect sensor data. This function will find any 
-# gaps in the vector (NA's) and calculate a new baseline for each section of
-# good data. 
-#' Convert hall effect count data (integer values from analog-digital converter)
-#' into percent gape values between 0 and 100\%. 
-#' 
-#' @param hallData A vector of analog-to-digital convertor counts from a 
-#' Hall effect sensor. The values are assumed to start low (<512) when the 
-#' magnetic signal is strong (close to sensor) and increase towards 512 when
-#' the magnetic signal is weak (far from sensor).
-#' @param cRegress A linear model object (lm) for the relationship of 'c' versus
-#' the log-transform of 'b'. 
-#' @param percentileLim A numeric value between 0 and 1, usually close to 0.01,
-#' used to define the lower and upper percentile limits (the upper limit is 
-#' mirrored from the lower limit). A value of 
-#' 0.01 would cause the 1st and 99th percentile sensor values to be used as the
-#' lower and upper limits.
-#' @return A vector of the same length as hallData containing percentage values 
-#' 0 to 100, representing the shell valve gape 
-#' opening. A value of 0 is a fully closed shell (strong magnetic signal) and
-#' 100 is a fully open shell (weak magnetic signal).
+# This calculates the baseline fully-closed and fully-open values based on the upper and lower 1% of hall effect sensor data for the given range of rows in the input dataset. Supply a vector of Hall effect sensor data. This function will find any gaps in the vector (NA's) and calculate a new baseline for each section of good data. 
+#' Convert hall effect count data (integer values from analog-digital converter) into percent gape values between 0 and 100\%. ' 
+#' @param hallData A vector of analog-to-digital convertor counts from a  Hall effect sensor. The values are assumed to start low (<512) when the magnetic signal is strong (close to sensor) and increase towards 512 when the magnetic signal is weak (far from sensor).
+#' @param cRegress A linear model object (lm) for the relationship of 'c' versus the log-transform of 'b'. 
+#' @param percentileLim A numeric value between 0 and 1, usually close to 0.01, used to define the lower and upper percentile limits (the upper limit is mirrored from the lower limit). A value of 0.01 would cause the 1st and 99th percentile sensor values to be used as the lower and upper limits.
+#' @return A vector of the same length as hallData containing percentage values 0 to 100, representing the shell valve gape opening. A value of 0 is a fully closed shell (strong magnetic signal) and 100 is a fully open shell (weak magnetic signal).
 
 calcPercentGapeNLME <- function (hallData, cRegress, percentileLim = 0.01){
 	require(nlme)
@@ -280,44 +324,97 @@ calcPercentGapeNLME <- function (hallData, cRegress, percentileLim = 0.01){
 	outputData = vector(mode = 'numeric', length = length(hallData))
 	outputData[] = NA # Convert all the values to NA to begin with
 	
-	# Now for each section of the input data, calculate the percent gape. This
-	# involves using the entries in mygaps to subset the input data and 
-	# calculate individual percentile values for each contiguous section of
-	# data. If there is a significant gap in the data (usually > 30 sec), the
-	# percentages will be re-calculated for each contiguous section of data. 
-	# This should accommodate any sensor/magnet re-glueing issues. 
+	# Now for each section of the input data, calculate the percent gape. This involves using the entries in mygaps to subset the input data and calculate individual percentile values for each contiguous section of data. If there is a significant gap in the data (usually > 30 sec), the percentages will be re-calculated for each contiguous section of data. This should accommodate any sensor/magnet re-glueing issues. 
 	for (i in 1:nrow(mygaps)){
 		st = mygaps$Start[i]
 		end = mygaps$End[i]
-		# First calculate the upper and lower 1% values of the Hall readings
-		# These will be count values representing the fully closed (lowest) 
-		# and fully open (highest, closest to 512) values.
+		# First calculate the upper and lower 1% values of the Hall readings. These will be count values representing the fully closed (lowest) and fully open (highest, closest to 512) values.
 		myrange = percentileRange(hallData[st:end], 
 				percentileLim = percentileLim)
 		
-		# Now truncate count values that are outside myrange to the limits of
-		# myrange. 
+		# Now truncate count values that are outside myrange to the limits of myrange.
 		hallData[which(hallData[st:end] < myrange[1])] = myrange[1]
 		hallData[which(hallData[st:end] > myrange[2])] = myrange[2]
 		
-		# The count values are now constrained within a range that should 
-		# encompass fully closed (0mm) to fully open (~5mm gape). Now calculate
-		# the approximate gape opening based on the count values and a curve
-		# fit. 
+		# The count values are now constrained within a range that should encompass fully closed (0mm) to fully open (~5mm gape). Now calculate the approximate gape opening based on the count values and a curve fit. 
 		
-		# Define the three asymptotic curve parameters a,b,c using the data for
-		# the current chunk of data.
+		# Define the three asymptotic curve parameters a,b,c using the data for the current chunk of data.
 		aVal = max(hallData[st:end],na.rm=TRUE)+1 # add 1 count to avoid Inf output
 		bVal = max(hallData[st:end],na.rm=TRUE) - 
 				min(hallData[st:end],na.rm=TRUE)
-		# Calculating c requires the linear model object supplied as cRegress,
-		# which will use the log-transformed 'b' value to estimate the 'c'
-		# parameter
+		# Calculating c requires the linear model object supplied as cRegress, which will use the log-transformed 'b' value to estimate the 'c' parameter
 		cVal = predict(cRegress, newdata = list(b = bVal))
 		
-		# Use DistFromCounts function to estimate valve gape distance using the 
-		# input hall effect count data at each time point and the 
-		# parameters a,b,c
+		# Use DistFromCounts function to estimate valve gape distance using the input hall effect count data at each time point and the parameters a,b,c
+		temp2 = DistFromCounts( hallData[st:end], 
+				a = aVal,
+				b = bVal,
+				c = cVal)
+		
+		# Replace any fully-open Inf values with the largest good max distance
+		temp2[is.infinite(temp2)] = max(temp2[is.finite(temp2)])
+		# Replace any negative distance values with the 0 distance value
+		temp2[which(temp2 < 0)] = 0
+		# Convert to percentage by dividing all distances by the maximum value
+		outputData[st:end] = (temp2 / max(temp2,na.rm=TRUE)) * 100
+		
+		# Round the values off to a reasonable precision
+		outputData[st:end] = round(outputData[st:end],1)
+		
+	}	
+	outputData	# return the output data vector
+}	# end of calcPercentGapeNLME function
+
+
+
+
+################################################################################
+### calcPercentGapeNLMEsubset function
+# Use this function to calculate the percentage gape (0-100%) of only a subset of data (days) at a time to account for growth of oyster shell. 
+# This calculates the baseline fully-closed and fully-open values based on the upper and lower 1% of hall effect sensor data for the given range of rows in the input dataset. Supply a vector of Hall effect sensor data. This function will find any gaps in the vector (NA's) and calculate a new baseline for each section of good data. 
+#' Convert hall effect count data (integer values from analog-digital converter) into percent gape values between 0 and 100\%. ' 
+#' @param hallData A vector of analog-to-digital converter counts from a  Hall effect sensor. The values are assumed to start low (<512) when the magnetic signal is strong (close to sensor) and increase towards 512 when the magnetic signal is weak (far from sensor).
+#' @param cRegress A linear model object (lm) for the relationship of 'c' versus the log-transform of 'b'. 
+#' @param percentileLim A numeric value between 0 and 1, usually close to 0.01, used to define the lower and upper percentile limits (the upper limit is mirrored from the lower limit). A value of 0.01 would cause the 1st and 99th percentile sensor values to be used as the lower and upper limits.
+#' @return A vector of the same length as hallData containing percentage values 0 to 100, representing the shell valve gape opening. A value of 0 is a fully closed shell (strong magnetic signal) and 100 is a fully open shell (weak magnetic signal).
+#' @param maxrow A number of rows used to define the upper and lower limits of hall sensor calculations. Chose arbitrary 7 day chunk. may want to be 5 days bc if have little bit of leftover chunk then can  add on to previous so then last chunk is 7 days. 
+
+calcPercentGapeNLMEsubset <- function (hallData, cRegress, percentileLim = 0.01, maxrow){
+	require(nlme)
+	# Get the row indices for the major gaps that exist now
+	mygaps = gapBounds(hallData) #figure out if length of mygaps exceeds max length value (7 days). If so then split it up 
+	
+	# Use gapBounds2 to subdivide the continuous data into chunks of time that are defined by maxrow
+	mygaps = gapBounds2(mygaps, maxrow)
+	
+	# Create an empty output vector of the same length as the input data. 
+	outputData = vector(mode = 'numeric', length = length(hallData))
+	outputData[] = NA # Convert all the values to NA to begin with
+	
+	# Now for each section of the input data, calculate the percent gape. This involves using the entries in mygaps to subset the input data and calculate individual percentile values for each contiguous section of data. If there is a significant gap in the data (usually > 30 sec), the percentages will be re-calculated for each contiguous section of data. This should accommodate any sensor/magnet re-glueing issues. 
+	for (i in 1:nrow(mygaps)){
+		st = mygaps$Start[i]
+		end = mygaps$End[i]
+		# First calculate the upper and lower 1% values of the Hall readings. These will be count values representing the fully closed (lowest) and fully open (highest, closest to 512) values.
+		myrange = percentileRange(hallData[st:end], 
+				percentileLim = percentileLim)
+		
+		# Now truncate count values that are outside myrange to the limits of myrange.
+		rowIndices = which(hallData[st:end] < myrange[1])
+		hallData[(st+rowIndices)] = myrange[1]
+		rowIndices = which(hallData[st:end] > myrange[2])
+		hallData[(st+rowIndices)] = myrange[2]
+		
+		# The count values are now constrained within a range that should encompass fully closed (0mm) to fully open (~5mm gape). Now calculate the approximate gape opening based on the count values and a curve fit. 
+		
+		# Define the three asymptotic curve parameters a,b,c using the data for the current chunk of data.
+		aVal = max(hallData[st:end],na.rm=TRUE)+1 # add 1 count to avoid Inf output
+		bVal = max(hallData[st:end],na.rm=TRUE) - 
+				min(hallData[st:end],na.rm=TRUE)
+		# Calculating c requires the linear model object supplied as cRegress, which will use the log-transformed 'b' value to estimate the 'c' parameter
+		cVal = predict(cRegress, newdata = list(b = bVal))
+		
+		# Use DistFromCounts function to estimate valve gape distance using the input hall effect count data at each time point and the parameters a,b,c
 		temp2 = DistFromCounts( hallData[st:end], 
 				a = aVal,
 				b = bVal,
@@ -594,8 +691,7 @@ exciseHall = function(halldata, metadf, maxGapFill = 12) {
 #' Concatenate multiple daily gape files into one data frame
 #' 
 #' @param filenames A vector of filenames (including path) to be concatenated
-#' @param myTimeZone A text representation of the timezone that the datalogger
-#' clock was set to (i.e. 'UTC' or 'PST8PDT' or 'etc/GMT+8')
+#' @param myTimeZone A text representation of the timezone that the datalogger clock was set to (i.e. 'UTC' or 'PST8PDT' or 'etc/GMT+8')
 #' @param verbose Turn on the progress bar if set to TRUE
 #' @return A data frame consisting of the input files concatenated and sorted chronologically. 
 
@@ -663,7 +759,7 @@ ConcatGapeFiles <- function(filenames, myTimeZone = 'UTC',verbose=TRUE){
 # which is unfortunate. You need to handle that appropriately. 
 
 #import csv metadata_with edits. use unique() on first column. Save result as "serialnumber"
-metafile = loadFieldMetaData(filename = metafilePath)
+metafile = loadFieldMetaData(filename = (paste0(metafilePath,"field_metadata_forcoding - Sheet1.csv")))
 
 serialnumber=unique(metafile[,1])
 
@@ -729,8 +825,8 @@ for(i in (serialnumber)){
     }
   gapedat=read.csv(gapepath)
 	# Convert the Hall effect values into estimated percent gape (0-100%)
-	gapedat[,"hallpercent"] = calcPercentGapeNLME(gapedat[,"Hall"], cRegress, 
-			percentileLim = c(0.01,0.95))
+	gapedat[,"hallpercent"] = calcPercentGapeNLMEsubset(gapedat[,"Hall"], cRegress, 
+			percentileLim = c(0.01,0.95), maxrow=1440*7) #1440=# min in a day, *7 days for one week of sampling
 	write.csv(gapedat, paste0(combogapefile, i, "_combogape.csv"))
 }
 
@@ -771,7 +867,6 @@ for(i in (serialnumber)){
 
 ```
 
-#subdivide SN by treatment/site and make plots of gape for each oyster. Import metadata to see which serial number goes to each treatment. 
 ```{r GapePlotCheckingFunctions}
 
 # Function to load a particular sensor's Hall effect data. This assumes that a path already exists called combogapefile
@@ -810,10 +905,7 @@ plotRawHallFunction = function(gape){
 
 }
 
-
-
 ```
-
 
 ```{r testPlotsGape, eval=FALSE}
 
@@ -917,16 +1009,27 @@ plot2HallFunction(SN148)
 SN133 = loadComboGape('SN133')
 plot2HallFunction(SN133)
 
-
-
-
-
-
 ```
 
+#subdivide SN by treatment/site and make plots of gape for each oyster. Import metadata to see which serial number goes to each treatment. 
+```{r combine-all-gape-files-and-add-metadata}
+library(readr)
+library(dplyr)
+#there's probably a better way to do this but set wd to folder w/ all gape files to be combined
+#setwd(combogapefile)
+#combine all data frames into 1
+allgape <- list.files(path='~/Documents/Oyster/data/Newport_SSINP/combinedgape') %>% 
+  lapply(read_csv) %>% 
+  bind_rows 
+#return wd
+#setwd("~/Documents/Oyster/Rcode")
 
+#combine metafile and allgape by SN to get treatment/site for each sensor
+allgapemeta<-merge(allgape,metafile, by='SN')
 
-
+ggplot(subset(allgapemeta, Site %in% c("PCH")), aes(x = POSIXt, y = Hall, col=SN))+
+  geom_point()
+```
 
 #Use metadata to plot all sensors from oyster treatment (plot hall %, make time series plot). 3 panel plot- seagrass, mud, oyster treatment for De Anza, do for each site. Or all on same plot w/ diff colors for diff treatments. 
 #ideally also align with temp data/tide data. Can be in separate datasets just also needs to have POSIXxt to align timestamps. 
