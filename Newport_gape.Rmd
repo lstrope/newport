@@ -943,7 +943,7 @@ plot2HallFunction(SN104)
 SN176 = loadComboGape('SN176')  # The low hump around Jul 27 is shared with SN152
 plot2HallFunction(SN176)
 
-SN174 = loadComboGape('SN174')
+SN174 = loadComboGape('SN174')  # Bad sensor? 
 plot2HallFunction(SN174)
 
 SN130 = loadComboGape('SN130')
@@ -952,7 +952,7 @@ plot2HallFunction(SN130)
 SN132 = loadComboGape('SN132')
 plot2HallFunction(SN132)
 
-SN123 = loadComboGape('SN123')
+SN123 = loadComboGape('SN123')  # Clean up the large outliers near start and end
 plot2HallFunction(SN123)
 
 SN150 = loadComboGape('SN150')
