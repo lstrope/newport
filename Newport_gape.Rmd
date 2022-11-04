@@ -10,11 +10,15 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+#libraries
 ```{r loadLibraries, echo=FALSE, message=FALSE}
 library(tidyverse)
-
+library(scales)
+library(readr)
+library(dplyr)
 ```
 
+#import files
 ```{r fileLocations, echo=FALSE}
 # Directory path on Lauren's machine
 setwd("~/Documents/Oyster/Rcode")
@@ -34,11 +38,11 @@ combogapefile= paste0(localpath,'Newport_SSINP/combinedgape/')
 metafilePath = paste0(localpath,'Newport_SSINP/metadata/')
 ```
 
-```{r gapeFunctions, echo=showcode}
+#Functions: gapBounds, gapBounds2, hallFilter, DistFromCounts, percentileRange, calcPercentGapeNLME, calcPercentGapeNLMEsubset, CRegressEstimate
+```{r gapeFunctions-, echo=showcode}
 
 # A set of functions originally taken from MussleTracker_data_proc4.R to 
 # handle the gape data
-
 
 ###############################################################################	
 # A function to determine where there are gaps of missing data, so that we can 
@@ -141,8 +145,10 @@ gapBounds2=function(mygaps, maxrow){
     nloops = floor(quotient)
     
     for (i in 1:nloops){
-      if (i == 1){
-        mygaps2 = data.frame(Start = mygaps$Start[1], End = maxrow)
+      if (i == 1 & nloops>=2){
+        mygaps2 = data.frame(Start = mygaps$Start[1], End = mygaps$Start[1]+maxrow)
+      } else if (i==1 & nloops<2){
+        mygaps2 = data.frame(Start = mygaps$Start[1], End = mygaps$End[1])
       } else if (i > 1 & i < nloops){
         temp = data.frame(Start = mygaps2$End[i-1]+1, End = mygaps2$End[i-1]+maxrow )
         mygaps2 = rbind(mygaps2, temp)
@@ -527,46 +533,8 @@ cRegressEstimate <- function(SN, Channel, gapeCalibFile){
 
 ```
 
+#Functions: loadFieldMetaData, Excisehall, concatGape_function
 ```{r importFunctions, echo=showcode}
-#' Concatenate multiple daily gape files into one data frame
-#' 
-#' @param filenames A vector of filenames (including path) to be concatenated. The input files should contain a column named DateTime that will be converted to a POSIXct timestamp class. 
-#' @param myTimeZone Specify the time zone of the timestamp data in the imported DateTime column. Default = UTC
-#' @param verbose A logical argument specifying whether to show verbose progress output during file ingestion
-#'  @return A data frame consisting of the input files concatenated and sorted chronologically. 
-
-ConcatGapeFiles <- function(filenames, myTimeZone = 'UTC',verbose=FALSE){
-	if(verbose){
-		pb = txtProgressBar(min=0,max = length(filenames), style = 3)
-	}
-# Open the raw data files and concatenate them.
-	for (f in 1:length(filenames)){
-		if(verbose) setTxtProgressBar(pb,f)
-		
-		dattemp = read.csv(filenames[f])
-		###########################
-		# Columns:
-		# POSIXt: elapsed seconds since 1970-01-01 00:00:00 (unix epoch) in whatever timezone the sensor was set to during deployment. Presumably UTC
-		# DateTime: human-readable character date and time, in whatever timezone the sensor was set to during deployment 
-		# Hallx: Raw analog to digital converter value for the indicated Hall effect channel. There are 16 channels (numbered 0-15) on the GapeTracker
-		# Battery.V:  Supply battery voltage
-		#########################
-		# Convert the DateTime column to a POSIXct object.
-		dattemp$DateTime = as.POSIXct(dattemp$DateTime, tz=myTimeZone) 	
-		
-		
-		# Concatenate the data files. 
-		if (f == 1){
-			dat = dattemp
-		} else if (f > 1){
-			dat = rbind(dat,dattemp)
-		}
-	}
-	if(verbose) close(pb)
-# Reorder the concatenated data frame by the DateTime values in case the files
-# were not fed in in chronological order
-	dat = dat[order(dat$DateTime),]
-}
 
 ########################################
 #' Load a csv data file containing deployment metadata
@@ -595,97 +563,6 @@ loadFieldMetaData <- function(filename, timezone = 'UTC'){
 	metadata # return data frame
 }
 
-
-##############################################################
-#' Excise questionable rows of data from Hall effect sensor data
-#' 
-#' @param halldata A dataframe containing timestamps and hall effect data from
-#' multiple sensors.
-#' @param metadf A data frame of start and end times to use in the data set,
-#' formatted as POSIXct time stamps in the same time zone as values in the 
-#' timestamps argument. The data frame should also have a column with an OysterID
-#' and a hall effect sensor channel for that oyster for each time period laid
-#' out in the data frame.
-#' @param maxGapFill The maximum number of missing values in the input time 
-#' series to impute via linear interpolation. Gaps longer than this will remain 
-#' as NA values. 
-#' 
-#' @return A data frame with columns
-#' added on for each oyster with available hall effect sensor data. Missing 
-#' periods of hall effect values will be denoted with NA values.  
-
-
-exciseHall = function(halldata, metadf, maxGapFill = 12) {
-	# Get the list of unique OysterID values from excisedf
-	oysters = unique(metadf$OysterID)
-	oysters = oysters[order(oysters)] # reorder if needed 
-	
-	# Generate output data frame based on initial deployment time and final 
-	# raw data time
-	time1 = min(metadf$StartIncludeUTC)
-	time2 = max(halldata$DateTimeUTC)
-	totaltimeseries = seq(time1,time2,by=5) 
-	
-	for (i in 1:length(oysters)){
-		# Create vector to hold hall effect data for this oyster
-		temphall = vector(mode='logical',length = length(totaltimeseries))
-		temphall[] = NA # Set all entries to NA initially
-		# Convert outputdf to a zoo object for easier time handling
-		tempoutput = zoo(temphall,order.by = totaltimeseries)
-		
-		
-		# Get the rows in metadf that refer to the current oyster
-		oysterRows = metadf[metadf$OysterID == oysters[i],]
-		
-		for (j in 1:nrow(oysterRows)){
-			# Get the hall effect sensor channel for this entry
-			tempChannel = as.character(oysterRows$Channel[j])
-			# Get the start and end time stamps for this entry
-			startTime = oysterRows$StartIncludeUTC[j]
-			endTime = oysterRows$EndIncludeUTC[j]
-			# Extract the relevant set of data from halldata
-			temp = halldata[halldata$DateTimeUTC>=startTime & 
-							halldata$DateTimeUTC<=endTime, 
-					c('DateTimeUTC',tempChannel)]
-			# Convert to a zoo timeseries object
-			temp = zoo(temp[,2],order.by=temp[,1],frequency = 1)
-			# Insert the temp hall data into the zoo object tempoutput
-			# The syntax is fun here: On the left side of the equals sign,
-			# you want a set of indices in tempoutput where the time value
-			# from tempoutput is found %in% the time values of temp. And on the
-			# right side of the equals sign, you want to get hall effect values
-			# from temp where the time value in temp is found %in% the time
-			# values of tempoutput (a much bigger set)
-			tempoutput[index(tempoutput) %in% index(temp)] = 
-					temp[index(temp) %in% index(tempoutput)]
-		}
-		
- 		#For brief gaps in the data, use the zoo package function 
-		# na.approx() to generate linearly-interpolated values for the missing
-		# data. For 5-second interval data, a maxGapFill = 12 will fill up to
-		# a 1 minute gap max.
-		# If the dataset starts off or ends with NAs, they will not be altered
-		tempoutput = na.approx(tempoutput, maxgap = maxGapFill, na.rm=FALSE)
-		
-		# Convert tempoutput back to a data frame and stick it onto an output
-		# dataframe
-		if (i == 1){
-			outputdf = data.frame(DateTimeUTC = index(tempoutput), tempoutput)
-			names(outputdf)[2] = as.character(oysters[i])
-		} else if (i > 1) {
-			tempoutput = as.data.frame(tempoutput)
-			outputdf = cbind(outputdf,tempoutput)
-			names(outputdf)[ncol(outputdf)] = as.character(oysters[i])
-		}
-	}
-	outputdf  # return outputdf	
-	
-} # End of exciseHall function
-
-
-```
-
-```{r concatGape_function}
 # This function deals with the GAPE data files that have an unnecessary comma at the end of each row of data, which messes with the read.csv import function
 
 #' Concatenate multiple daily gape files into one data frame
@@ -745,8 +622,106 @@ ConcatGapeFiles <- function(filenames, myTimeZone = 'UTC',verbose=TRUE){
 	dat = dat[order(dat$DateTime),]
 }
 
+##############################################################
+#' Excise questionable rows of data from Hall effect sensor data
+#' 
+#' @param halldata A dataframe containing timestamps and hall effect data from
+#' multiple sensors.
+#' @param metadf A data frame of start and end times to use in the data set,
+#' formatted as POSIXct time stamps in the same time zone as values in the 
+#' timestamps argument. The data frame should also have a column with an OysterID
+#' and a hall effect sensor channel for that oyster for each time period laid
+#' out in the data frame.
+#' @param maxGapFill The maximum number of missing values in the input time 
+#' series to impute via linear interpolation. Gaps longer than this will remain 
+#' as NA values. 
+#' 
+#' @return A data frame with columns
+#' added on for each oyster with available hall effect sensor data. Missing 
+#' periods of hall effect values will be denoted with NA values.  
+
+
+exciseHall = function(halldata, metadf, maxGapFill = 12) {
+	# Get the list of unique OysterID values from excised
+	oysters = halldata$SN[1]
+	#oysters = oysters[order(oysters)] # reorder if needed 
+	
+	# Generate output data frame based on initial deployment time and final 
+	# raw data time
+	time1 = min(metadf$StartIncludeUTC, na.rm=T)
+	time2 = max(halldata$DateTime, na.rm=T)
+	totaltimeseries = seq(time1,time2,by=60) #every 60 seconds
+	
+#	for (i in 1:length(oysters)){
+		# Create vector to hold hall effect data for this oyster
+		# temphall = vector(mode='logical',length = length(totaltimeseries))
+		temphall = matrix(data = NA, nrow = length(totaltimeseries), ncol = 3)
+		colnames(temphall) = c('Hall', 'Temp.C','Battery.V')
+		# temphall[] = NA # Set all entries to NA initially
+		# Convert outputdf to a zoo object for easier time handling
+		tempoutput = zoo(temphall,order.by = totaltimeseries)
+		
+		# Get the rows in metadf that refer to the current oyster
+		oysterRows = metadf[metadf$SN == oysters[1],]
+		
+		for (j in 1:nrow(oysterRows)){
+			# Get the hall effect sensor channel for this entry
+			#tempChannel = as.character(oysterRows$Channel[j])
+			# Get the start and end time stamps for this entry
+			startTime = oysterRows$StartIncludeUTC[j]
+			endTime = oysterRows$EndIncludeUTC[j]
+			# Extract the relevant set of data from halldata. If no EndTime in metadata then take all halldata after StartTime
+    	  if (is.na(endTime)==T){
+    		  	temp1 = halldata[halldata$DateTime>=startTime, 
+    				c('DateTime',"Hall", "Temp.C", "Battery.V")]
+    		} else {
+      		  temp1 = halldata[halldata$DateTime>=startTime & 
+      						halldata$DateTime<=endTime, 
+      				c('DateTime', "Hall", "Temp.C", "Battery.V")]
+  			   }
+			
+			# temp = halldata[halldata$DateTime>=startTime & 
+			# 				halldata$DateTime<=endTime, 
+			# 		c('DateTime',"Hall", "Temp.C", "Battery.V")]
+			# Convert to a zoo timeseries object
+			temp = zoo(temp1[,2:4],order.by=temp1[,1],frequency = 1)
+			
+			# Insert the temp hall data into the zoo object tempoutput
+			# The syntax is fun here: On the left side of the equals sign,
+			# you want a set of indices in tempoutput where the time value
+			# from tempoutput is found %in% the time values of temp. And on the
+			# right side of the equals sign, you want to get hall effect values
+			# from temp where the time value in temp is found %in% the time
+			# values of tempoutput (a much bigger set)
+			tempoutput[index(tempoutput) %in% index(temp), ] = 
+					temp[index(temp) %in% index(tempoutput),]
+	#	}
+		
+ 		#For brief gaps in the data, use the zoo package function 
+		# na.approx() to generate linearly-interpolated values for the missing
+		# data. For 5-second interval data, a maxGapFill = 12 will fill up to
+		# a 1 minute gap max.
+		# If the dataset starts off or ends with NAs, they will not be altered
+		tempoutput = na.approx(tempoutput, maxgap = maxGapFill, na.rm=FALSE)
+	
+	  tempoutput$SN=oysters
+		# Convert tempoutput back to a data frame and stick it onto an output
+		# dataframe
+	#	if (i == 1){
+			outputdf = data.frame(DateTime = index(tempoutput), tempoutput)
+			names(outputdf)[2] = "Hall"
+		#} else if (i > 1) {
+		#	tempoutput = as.data.frame(tempoutput)
+		#	outputdf = cbind(outputdf,tempoutput)
+		#	names(outputdf)[ncol(outputdf)] = as.character(oysters[i])
+	#	}
+	}
+	outputdf  # return outputdf	
+	
+} # End of exciseHall function
 ```
 
+#list individal gape files and combine into one csv per SN
 ```{r get-list-of-files-and-make-big-csv, echo=FALSE}
 # Get a list of the IR heart sensor files by looking for filenames that end in IR.csv
 #IRfilenames = dir(path = paste0(NewportDir, WestcliffEelgrassDir, 'SN107_2022-07-13_2022-07-30'), 
@@ -754,16 +729,14 @@ ConcatGapeFiles <- function(filenames, myTimeZone = 'UTC',verbose=TRUE){
 
 # Get a list of gape (and temperature) filenames by looking for filenames that end in GAPE.csv
 #gapefiles = dir(path = paste0(NewportDir, WestcliffEelgrassDir, 'SN107'), full.names=TRUE, pattern= "*GAPE.csv")
-# These files tend to have a comma after the last column's data, which makes read.csv think there's one more column 
-# of data than there are names in the header row, which then treats the 1st column of POSIXt values as row numbers, 
-# which is unfortunate. You need to handle that appropriately. 
+# These files tend to have a comma after the last column's data, which makes read.csv think there's one more column of data than there are names in the header row, which then treats the 1st column of POSIXt values as row numbers, which is unfortunate. 
 
 #import csv metadata_with edits. use unique() on first column. Save result as "serialnumber"
-metafile = loadFieldMetaData(filename = (paste0(metafilePath,"field_metadata_forcoding - Sheet1.csv")))
+metafile = loadFieldMetaData(filename = (paste0(metafilePath,"field_metadata_forcoding_withoutSN132 - Sheet1.csv")))
 
 serialnumber=unique(metafile[,1])
 
-# for loop that says go through each serial number in the vector 'serialnumber' and find all files, 
+# go through each serial number in the vector 'serialnumber' and find all files, 
 # combine them together, and spit out combogapefile at end
 ######################################## 
 
@@ -780,38 +753,15 @@ for(i in (serialnumber)){
     }
   #Use concatgapefiles to combine
   gapedat = ConcatGapeFiles(gapecombo, myTimeZone = 'UTC', verbose = FALSE)
-
+# Call exciseHall function to generate a master data frame of raw hall effect readings from the oysters that were present in the field. 
+  gapedat = exciseHall(halldata = gapedat, metadf = metafile)
   write.csv(gapedat, paste0(combogapefile, i, "_combogape.csv"), row.names = FALSE)
 
 }
-
- 
-#concatgapefiles works outside of for loop 
-#gapedat = ConcatGapeFiles(gapecombo, myTimeZone = 'UTC', verbose = FALSE)
-
-#for(i in (serialnumber)){
- # list.files(dir(path=paste0(NewportDir, WestcliffEelgrassDir,i), full.names = #TRUE, pattern=paste0(i,"_GAPE.csv")))}
-
-#for(i in (serialnumber)){
-#  list.files(path=paste0(NewportDir, #WestcliffEelgrassDir,i),pattern=paste0(i,"_GAPE.csv"))}
-
-#gapecombo=paste0(ConcatGapeFiles('../data', myTimeZone="UTC",verbose=FALSE),serialnumber[i],"combogape.csv")
-
-#use "serialnumber" (every row is serial number to be processed) of all serial numbers in field. in this directory, look for folder "SN107" then get list of all gape files in that folder and process them. with dir function can find folder names using something like pattern= "SN107". 
-#make for loop go through vector. 
-#at end get calculated ranges for sensors. 
-#paste0(gapeDir(###place where it saves),serialnumber[i],"combogape.csv")
-#if there's no folder for serial number (haven't downloaded data yet) then have it end the loop and go back to the start and try the next number
 ```
 
+#write over combogape files to add in percent gape and percentiles for binary graphing
 ```{r calcPercentageGape,echo=showcode, eval = evalAll}
-# The sensors for the LPL oysters were originally calibrated on board SN21,
-# so use value that to extract relevant calibration data from the calibration
-# file stored in calibFileName
-
-# TODO: Recalibrate with BivalveBit boards
-# TODO: Modify calcPercentGapeNLME to account for shifting baseline in the Hall signal as the animal grows 
-
 
 #get data from channel 1 of SN20 to calibrate sensor. Generate set of regression coefficients and put them in cRegress. Use cRegress to do % calculation.
 chNum=1
@@ -825,8 +775,16 @@ for(i in (serialnumber)){
     }
   gapedat=read.csv(gapepath)
 	# Convert the Hall effect values into estimated percent gape (0-100%)
-	gapedat[,"hallpercent"] = calcPercentGapeNLMEsubset(gapedat[,"Hall"], cRegress, 
-			percentileLim = c(0.01,0.95), maxrow=1440*7) #1440=# min in a day, *7 days for one week of sampling
+	gapedat[,"hallpercent"] = calcPercentGapeNLMEsubset(gapedat[,"Hall"], cRegress, percentileLim = c(0.01,0.95), maxrow=1440*7) 
+	    #1440=# min in a day, *7 days for one week of sampling. 
+	    #Every day 7 days calculate percent gape. 
+	#make empty binary column
+	gapedat$binary=NA
+	#for hallpercent rows less than or equal to 20, write 0 in binary column 
+	gapedat[which(gapedat$hallpercent<=20), "binary"]=0
+	#for hallpercent rows greater than or equal to 50, write 1 in binary column 
+	gapedat[which(gapedat$hallpercent>=50), "binary"]=1
+	#save as one csv per SN
 	write.csv(gapedat, paste0(combogapefile, i, "_combogape.csv"))
 }
 
@@ -865,6 +823,58 @@ for(i in (serialnumber)){
 #		file = paste0(gapeDir,LPL1minGapeFile),
 #		row.names=FALSE)
 
+```
+
+#combine combogape files (w/hallpercent, percentile, binary columns) into one giant dataset. Combine with metadata
+
+```{r combine-all-gape-files-and-add-metadata}
+#combine all data frames into 1
+allgape <- list.files(path=combogapefile, full.names = T) %>% 
+  lapply(read_csv) %>% 
+  bind_rows 
+
+#combine metafile and allgape by SN to get treatment/site for each sensor
+allgapemeta<-merge(allgape,metafile, by='SN')
+
+```
+
+#Subset data by every 10th row, treatment, and site. Plot
+```{r}
+#take every 10th row from dataframe
+my10MinuteSubset = allgapemeta[seq(1,nrow(allgapemeta), by = 10), 'hall.percent'] 
+
+my10MinuteSubset %>%
+  #use filter to subset the rows based on the LOCATION column values
+  filter(SN == c("SN150", "SN138", "SN164", "SN143","SN191","")) %>% 
+  filter(Site=="DeAnza")%>%
+  ggplot(aes(x = DateTime, y = binary, col=SN))+
+    geom_point(shape=1)+
+    geom_jitter(height=0.1)+
+    facet_wrap(~Treatment)+
+    ylim(-0.1, 1.1)
+
+#Use metadata to plot all sensors from oyster treatment (plot hall %, make time series plot). 3 panel plot- seagrass, mud, oyster treatment for De Anza, do for each site. Or all on same plot w/ diff colors for diff treatments. 
+#ideally also align with temp data/tide data. Can be in separate datasets just also needs to have POSIXxt to align timestamps. 
+#rtide package that generates time series of predicated tides. Use long beach (LA) harbor tide station. 
+
+#can have giant data file with all sensor data. 
+
+#will need to calculate average open for individuals over time. 
+```
+
+#cut out specific times from meta data that shouldn't be used
+```{r processRawHallData,echo=showcode, eval = evalAll}
+# Call exciseHall function to generate a master data frame of raw hall effect readings from the oysters that were present in the field. This will remove the other sensor channels in the raw data files that didn't have oysters  attached. This function could take several minutes to run for bigger data sets
+gapemaster = exciseHall(halldata = allgapemeta, metadf = metafile)      
+
+# Generate a set of oyster locations (bottom or surface) from the metadata file
+#LPLoysterLocations = unique(LPLmeta2019[,c(2,4)])
+#LPLoysterLocations = LPLoysterLocations[order(LPLoysterLocations$Location),]
+
+# Create an additional column with timestamps in the local standard time zone
+# Pacific Standard Time (this will still ignore daylight savings time)
+#LPLmaster$DateTimePST = LPLmaster$DateTimeUTC 
+#attr(LPLmaster$DateTimePST,'tzone') = 'etc/GMT+8'
 ```
 
 ```{r GapePlotCheckingFunctions}
@@ -910,7 +920,6 @@ plotRawHallFunction = function(gape){
 ```{r testPlotsGape, eval=FALSE}
 
 SN142 = loadComboGape('SN142')
-plot2HallFunction(SN142)
 plotRawHallFunction(SN142)
 
 
@@ -1011,76 +1020,6 @@ plot2HallFunction(SN133)
 
 ```
 
-#subdivide SN by treatment/site and make plots of gape for each oyster. Import metadata to see which serial number goes to each treatment. 
-```{r combine-all-gape-files-and-add-metadata}
-library(readr)
-library(dplyr)
-#there's probably a better way to do this but set wd to folder w/ all gape files to be combined
-#setwd(combogapefile)
-#combine all data frames into 1
-allgape <- list.files(path='~/Documents/Oyster/data/Newport_SSINP/combinedgape') %>% 
-  lapply(read_csv) %>% 
-  bind_rows 
-#return wd
-#setwd("~/Documents/Oyster/Rcode")
-
-#combine metafile and allgape by SN to get treatment/site for each sensor
-allgapemeta<-merge(allgape,metafile, by='SN')
-
-ggplot(subset(allgapemeta, Site %in% c("PCH")), aes(x = POSIXt, y = Hall, col=SN))+
-  geom_point()
-```
-
-#Use metadata to plot all sensors from oyster treatment (plot hall %, make time series plot). 3 panel plot- seagrass, mud, oyster treatment for De Anza, do for each site. Or all on same plot w/ diff colors for diff treatments. 
-#ideally also align with temp data/tide data. Can be in separate datasets just also needs to have POSIXxt to align timestamps. 
-#rtide package that generates time series of predicated tides. Use long beach (LA) harbor tide station. 
-
-#can have giant data file with all sensor data. 
-
-#will need to calculate average open for individuals over time. 
-
-#combine data from different files/days into continuous time series
-```{r loadLPL,echo=showcode, eval = evalAll}
-# Generate the list of LPL field data file names
-#LPLfiles = dir(path = gapeRawDir, full.names=TRUE, pattern = '*.csv')  
- 
-# Use the ConcatGapeFiles function to ingest the raw data files
-#gapedat = ConcatGapeFiles(gapefiles, myTimeZone = 'UTC', verbose = FALSE)
-# Rename the DateTime column to indicate that these values were set in the UTC time zone 
-#names(gapedat)[2] = 'DateTimeUTC'
-# Create an additional column with timestamps in the local standard time zone
-# Pacific Standard Time (this will still ignore daylight savings time)
-#gapedat$DateTimePST = gapedat$DateTimeUTC
-#attr(gapedat$DateTimePST,'tzone') = 'etc/GMT+8'
-
-# Call the loadFieldMetaData function to import the metadata file
-#LPLmeta2019 = loadFieldMetaData(filename = 
-			#	'../data/LPL_field_metadata_2019-2020.csv')  
-
-```
-
-#Can use if have meta data file
-#cut out specific times from meta data that shouldn't be used
-```{r processRawHallData,echo=showcode, eval = evalAll}
-# Call exciseHall function to generate a master data frame of raw hall effect readings from the oysters that were present in the field. This will remove the other sensor channels in the raw data files that didn't have oysters  attached. This function could take several minutes to run for bigger data sets
-#gapemaster = exciseHall(halldata = gapedat, metadf = LPLmeta2019)      
-
-# Generate a set of oyster locations (bottom or surface) from the metadata file
-#LPLoysterLocations = unique(LPLmeta2019[,c(2,4)])
-#LPLoysterLocations = LPLoysterLocations[order(LPLoysterLocations$Location),]
-
-# Create an additional column with timestamps in the local standard time zone
-# Pacific Standard Time (this will still ignore daylight savings time)
-#LPLmaster$DateTimePST = LPLmaster$DateTimeUTC 
-#attr(LPLmaster$DateTimePST,'tzone') = 'etc/GMT+8'
-```
-
-```{r concatGape}
-# Use the concatenate function defined above to put together all of the gape files stored in Gapefilenames 
-SN107_gape = ConcatGapeFiles(Gapefilenames, myTimeZone = 'UTC', verbose = TRUE)
-
-```
-
 ```{r testPlot}
 # Plot the timeseries of gape values
 plot(SN107_gape$DateTime, SN107_gape$Hall, type = 'l')
@@ -1091,4 +1030,103 @@ SN107_gape_fieldonly <- SN107_gape %>%
 
 plot(SN107_gape_fieldonly$DateTime, SN107_gape_fieldonly$Hall, type = 'l')
 
+```
+
+```{r convertHalltobinary attempts}
+#make for loop that converts Hall values to 0s if between 0-40, and 1 if between 70-100 percentile. Use allgapemeta
+
+#code for finding percentile
+quantile(df$columnname, probs=0.9)
+
+#didn't work- doesn't separate by SN, assigned 0s and 1s based on all Hall percentiles combined
+allgapemeta$binary <- with(allgapemeta, +(Hall >= quantile(Hall, probs=0.75)))
+
+#didn't work- only took out 3 Hall numbers per SN that were in 0.25, 0.5, and 0.75 percentile
+allgapemetabinary<-allgapemeta %>% 
+  group_by(SN) %>% 
+  summarise(Hall = quantile(Hall, c(0.25, 0.5, 0.75)), q = c(0.25, 0.5, 0.75))%>%
+  mutate(allgapemeta$q)
+
+SN104$binary <- with(SN104, +(hallpercent >= quantile(hallpercent, probs=c(0,0.75))))
+
+#make everything greater than or equal to 0.75 percentile a 1, everything else is 0
+SN104$binary <- with(SN104, +(hallpercent >= quantile(hallpercent, 0.75)))
+
+SN104$percentile=transform(SN104, percentile=findInterval(hallpercent, quantile(hallpercent, seq(0,1, by=.1))))
+
+#could separate by SN in large dataset but don't know how to assign 0s and 1s to 0-0.25 and 0.75-1 respectively
+allgapemetabinary%>%
+  group_by(SN)%>%
+  summarize(binary=quantile(hallpercent, 0.75))
+
+#create column quartile with 1,2,3,4 based on hallpercent percentiles 0-0.25, 0.25-0.5, 0.5-0.75, 0.75-1.0
+SN104 <- within(SN104, quartile <- as.integer(cut(hallpercent, quantile(hallpercent, probs=0:4/4), include.lowest=TRUE)))
+
+#create binary column that sets 1 for percentile 1, and 2 for percentile 4, percentile 2 and 3 are NAs
+SN104=SN104 %>% mutate(binary =
+                     case_when(quartile == 1 ~ "1", 
+                               quartile == 2&3 ~ "NA",
+                               quartile == 4 ~ "2"))
+
+```
+
+```{r Extracode}
+#concatgapefiles works outside of for loop 
+#gapedat = ConcatGapeFiles(gapecombo, myTimeZone = 'UTC', verbose = FALSE)
+
+#for(i in (serialnumber)){
+ # list.files(dir(path=paste0(NewportDir, WestcliffEelgrassDir,i), full.names = #TRUE, pattern=paste0(i,"_GAPE.csv")))}
+
+#for(i in (serialnumber)){
+#  list.files(path=paste0(NewportDir, #WestcliffEelgrassDir,i),pattern=paste0(i,"_GAPE.csv"))}
+
+#gapecombo=paste0(ConcatGapeFiles('../data', myTimeZone="UTC",verbose=FALSE),serialnumber[i],"combogape.csv")
+
+#use "serialnumber" (every row is serial number to be processed) of all serial numbers in field. in this directory, look for folder "SN107" then get list of all gape files in that folder and process them. with dir function can find folder names using something like pattern= "SN107". 
+#make for loop go through vector. 
+#at end get calculated ranges for sensors. 
+#paste0(gapeDir(###place where it saves),serialnumber[i],"combogape.csv")
+#if there's no folder for serial number (haven't downloaded data yet) then have it end the loop and go back to the start and try the next number
+```
+
+```{r- concatGapeFunction extra}
+#' Concatenate multiple daily gape files into one data frame
+#' 
+#' @param filenames A vector of filenames (including path) to be concatenated. The input files should contain a column named DateTime that will be converted to a POSIXct timestamp class. 
+#' @param myTimeZone Specify the time zone of the timestamp data in the imported DateTime column. Default = UTC
+#' @param verbose A logical argument specifying whether to show verbose progress output during file ingestion
+#'  @return A data frame consisting of the input files concatenated and sorted chronologically. 
+
+# ConcatGapeFiles <- function(filenames, myTimeZone = 'UTC',verbose=FALSE){
+# 	if(verbose){
+# 		pb = txtProgressBar(min=0,max = length(filenames), style = 3)
+# 	}
+# # Open the raw data files and concatenate them.
+# 	for (f in 1:length(filenames)){
+# 		if(verbose) setTxtProgressBar(pb,f)
+# 		
+# 		dattemp = read.csv(filenames[f])
+# 		###########################
+# 		# Columns:
+# 		# POSIXt: elapsed seconds since 1970-01-01 00:00:00 (unix epoch) in whatever timezone the sensor was set to during deployment. Presumably UTC
+# 		# DateTime: human-readable character date and time, in whatever timezone the sensor was set to during deployment 
+# 		# Hallx: Raw analog to digital converter value for the indicated Hall effect channel. There are 16 channels (numbered 0-15) on the GapeTracker
+# 		# Battery.V:  Supply battery voltage
+# 		#########################
+# 		# Convert the DateTime column to a POSIXct object.
+# 		dattemp$DateTime = as.POSIXct(dattemp$DateTime, tz=myTimeZone) 	
+# 		
+# 		
+# 		# Concatenate the data files. 
+# 		if (f == 1){
+# 			dat = dattemp
+# 		} else if (f > 1){
+# 			dat = rbind(dat,dattemp)
+# 		}
+# 	}
+# 	if(verbose) close(pb)
+# # Reorder the concatenated data frame by the DateTime values in case the files
+# # were not fed in in chronological order
+# 	dat = dat[order(dat$DateTime),]
+# }
 ```
