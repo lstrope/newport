@@ -291,10 +291,11 @@ calcPercentGapeNLME <- function (hallData, cRegress, percentileLim = 0.01){
 		myrange = percentileRange(hallData[st:end], 
 				percentileLim = percentileLim)
 		
-		# Now truncate count values that are outside myrange to the limits of
-		# myrange. 
-		hallData[which(hallData[st:end] < myrange[1])] = myrange[1]
-		hallData[which(hallData[st:end] > myrange[2])] = myrange[2]
+		# Now truncate count values that are outside myrange to the limits of myrange.
+		rowIndices = which(hallData[st:end] < myrange[1])
+		hallData[(st+rowIndices)] = myrange[1]
+		rowIndices = which(hallData[st:end] > myrange[2])
+		hallData[(st+rowIndices)] = myrange[2]
 		
 		# The count values are now constrained within a range that should 
 		# encompass fully closed (0mm) to fully open (~5mm gape). Now calculate
