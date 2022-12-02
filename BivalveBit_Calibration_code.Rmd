@@ -17,6 +17,13 @@ localpath = '../../data/'  # Luke's path
 
 ```
 
+```{r directories}
+BivalveBitCalibDir = paste0(localpath,'Calibration/Newport_BivalveBit_calibrations/')
+
+
+```
+
+
 # Calibration walk-through
 
 ## Fall 2022
@@ -496,23 +503,17 @@ calcPercentGapeNLME <- function (hallData, cRegress, percentileLim = 0.01){
 #' A function to generate a set of hall effect calibration data and estimate
 #' the relationship between parameters 'b' and 'c', for later use in the 
 #' function calcPercentGapeNLME(). 
-#' @param SN A text string naming the board serial number, in the form 'SN21'
-#' @param Channel numeric value naming the Hall effect sensor channel to be 
-#' calibrated (expected values 0-15). 
 #' @param gapeCalibFile A text path to the file that holds Hall effect
 #' calibration data
 #' @return cRegress A linear model object representing the best fit regression
 #'  of parameter 'c' on the log-transformed parameter 'b'. 
 
-cRegressEstimate <- function(SN, Channel, gapeCalibFile){
+cRegressEstimate <- function(gapeCalibFile){
 	require(nlme)
-	# Create an identifier for the board/channel combination 'SN21Ch01'
-	if (Channel < 10){
-		newChannel = paste0('0',as.character(Channel))
-	} else {
-		newChannel = as.character(Channel)
-	}
-	currentID = paste0(SN,'Ch',newChannel)
+	# This version of the function assumes that the input file contains
+	# only data for a single BivalveBit board, which only has a single Hall
+	# effect sensor.
+
 	 
 	# Get list of calibration data
 	gapeCalibs = read.csv(gapeCalibFile)
@@ -521,26 +522,26 @@ cRegressEstimate <- function(SN, Channel, gapeCalibFile){
 	gapeCalibs$Trial = factor(gapeCalibs$Trial)
 	# Create a unique identifier for each board/channel combination,
 	# ensuring that the Channel number is always 2 digits
-	gapeCalibs$ID = factor(paste0(gapeCalibs$Serial,'Ch',
-					ifelse(gapeCalibs$HallChannel<10,
-							paste0('0',gapeCalibs$HallChannel),
-							gapeCalibs$HallChannel)))
+#	gapeCalibs$ID = factor(paste0(gapeCalibs$Serial,'Ch',
+#					ifelse(gapeCalibs$HallChannel<10,
+#							paste0('0',gapeCalibs$HallChannel),
+#							gapeCalibs$HallChannel)))
 
 # For any instance where magnet was set up so that values climbed above 512
 # when close to the sensor, reverse those values so they are all less than 
 # 512. 
-	for (i in 1:length(levels(gapeCalibs$ID))){
-		if (max(gapeCalibs$Reading[gapeCalibs$ID == 
-								levels(gapeCalibs$ID)[i]]) > 515){
-			gapeCalibs$Reading[gapeCalibs$ID == 
-							levels(gapeCalibs$ID)[i]] = 1023 - 
-					gapeCalibs$Reading[gapeCalibs$ID == 
-									levels(gapeCalibs$ID)[i]]
-		}
-	}	
+#	for (i in 1:length(levels(gapeCalibs$ID))){
+#		if (max(gapeCalibs$Reading[gapeCalibs$ID == 
+#								levels(gapeCalibs$ID)[i]]) > 515){
+#			gapeCalibs$Reading[gapeCalibs$ID == 
+#							levels(gapeCalibs$ID)[i]] = 1023 - 
+#					gapeCalibs$Reading[gapeCalibs$ID == 
+#									levels(gapeCalibs$ID)[i]]
+#		}
+#	}	
 	# Begin generating the asymptotic curve fit parameters for the magnetic
 # hall effect sensor data. 
-	gC2 = groupedData(Reading~Distance.mm|ID/Trial,data=gapeCalibs)
+	gC2 = nlme::groupedData(Reading~Distance.mm|Serial/Trial,data=gapeCalibs)
 	
 
 # Fit the asymptotic model and generate a set of coefficient values
@@ -548,8 +549,8 @@ cRegressEstimate <- function(SN, Channel, gapeCalibFile){
 # magID and Trial. 
 	
 	# Fit separate curves to each group (trial) in the grouped data frame
-	mod3 = nlsList(Reading~a-(b*exp(-c*Distance.mm)), 
-			data = subset(gC2,subset = ID == currentID), 
+	mod3 = nlme::nlsList(Reading~a-(b*exp(-c*Distance.mm)), 
+			data = gC2, 
 			start = c(a = 460, b = 60, c = 0.3),
 			control = list(minFactor = 1e-9, msMaxIter = 200, maxiter = 200))
 # Extract the a,b,c coefficients and put them in a data frame
@@ -586,62 +587,7 @@ distances related to the initial shell opening, we can get reasonably good
 (sub-millimeter) estimates of the change in distance between the magnet and
 sensor (and thus between the 2 valves of the shell)
 
-Below is a figure showing the observed and fitted estimates of the readings
-for each Distance, from multiple starting points. We see good correspondence
-between the fitted values and observed values, indicating that the estimated
-coefficients
 
-```{r trialCurveFitting, echo=FALSE, eval = FALSE, dpi=300,fig.width=5,fig.cap='Observed readings (open circles) and fitted values (closed circles) derived from nls curve fitting routine.'}
-## Example of code to fit curves to each Trial for a given sensor, followed by
-# showing the predicted values from the curve fits afterwards. 
-
-library(nlme)
-# Begin generating the asymptotic curve fit parameters for the magnetic
-# hall effect sensor data. 
-gC2 = groupedData(Reading~Distance.mm|Trial,data=SN20Hall02, order.groups = FALSE)
-#plot(Reading~Distance.mm,data=gC2)
-
-
-# Fit separate curves to each group (trial) in the grouped data frame
-mod3 = nlsList(Reading~a-(b*exp(-c*Distance.mm)), 
-		data = gC2, start = c(a = 460, b = 30, c = 0.3),
-		control = list(minFactor = 1e-9, msMaxIter = 200))
-# Extract the a,b,c coefficients and put them in a data frame
-abcvals = data.frame(a = coef(mod3)[,1], b = coef(mod3)[,2],
-		c = coef(mod3)[,3])
-
-# The fit between 'b' and 'c' can be linearized with a log transform of 'b'
-cRegress = lm(c~log(b), data = abcvals)  
-#plot(c~log(b),data=abcvals)
-
-# Run predict function for a set of 50 fixed distances
-reps = 100
-newdist = seq(0,12.3,length = reps)
-res = predict(mod3, newdata = list(Distance.mm = newdist))
-# Create a data frame from the results, with the Distance.mm values added
-# back in and a Trial number assigned for each group of 50 distances
-predlines = data.frame(Reading = res, Distance.mm= rep(newdist,10),
-		Trial = factor(rep(1:10,each=reps)))
-# Basic plot
-plot(Reading~Distance.mm, data = predlines, type = 'n',
-		main = 'SN20Hall02')
-for (i in 1:length(levels(SN20Hall02$Trial))){
-	# Plot observed points
-	points(Reading~Distance.mm, 
-			data = SN20Hall02[SN20Hall02$Trial == levels(SN20Hall02$Trial)[i],],
-			pch = 21, col = i)
-	# Plot observed lines
-#	lines(Reading~Distance.mm,
-#			data = SN20Hall02[SN20Hall02$Trial == levels(SN20Hall02$Trial)[i],],
-#			pch = 21, col = i, lwd = 1.5)
-	# Plot fitted points based on curve fitting routine
-	points(Reading~Distance.mm, 
-			data = predlines[predlines$Trial == levels(predlines$Trial)[i],],
-			pch = 20, col = i)
-}
-legend('bottomright',legend=c('Observed','Fitted'),pch=c(21,20))
-
-```
 
 ## Calibration results for each sensor
 
@@ -653,19 +599,11 @@ of the curves is consistent, changing only in steepness depending on the
 initial starting distance.
 
 
-```{r defineGapeCalibFile, echo=showcode, cache=FALSE}
-# Give the path to the concatenated calibration file
-calibDir ='../data/Calibration/201905_all_calibrations/'
-gapeCalibFile = paste0(calibDir,'201905_calibrations.csv')
-```
 
 ```{r plotCalibFunction, echo=showcode }
 
 #' A function to open calibration data and plot data for a given board and channel
 #' 
-#' @param SN A text string naming the board serial number, in the form 'SN21'
-#' @param Channel numeric value naming the Hall effect sensor channel to be 
-#' calibrated (expected values 0-15). 
 #' @param gapeCalibFile A text path to the file that holds Hall effect
 #' calibration data
 #' @param plot Logical value indicating whether a plot should be produced
@@ -678,31 +616,36 @@ gapeCalibFile = paste0(calibDir,'201905_calibrations.csv')
 #' included
 #'  
 
-plotCalib <- function(SN,Channel,gapeCalibFile, plot = TRUE, plotpoints = TRUE, 
+plotCalib <- function(gapeCalibFile, plot = TRUE, plotpoints = TRUE, 
 		plotlines = TRUE, plottext = FALSE, insetplot = FALSE) {
-	# Create an identifier for the board/channel combination, i.e. 'SN21Ch01'
-	if (Channel < 10){
-		newChannel = paste0('0',as.character(Channel))
-	} else {
-		newChannel = as.character(Channel)
-	}
+
+#	# Get the Serial number from the file name, match pattern 'SNxxx'
+#	matchVal = regexpr(pattern='SN[[:digit:]]{3}', text = fname)
+#	# Extract the magnet ID as text
+#	SN = substr(x=fname,
+#			start = matchVal, 
+#			stop = matchVal + (attr(matchVal,'match.length')-1))
 	# Create the ID for the current board & channel
-	currentID = paste0(SN,'Ch',newChannel)
+#	currentID = SN
 	# Open the concatenated file of calibration data
 	gapeCalibs = read.csv(gapeCalibFile) 
 	gapeCalibs$Serial = factor(gapeCalibs$Serial)
 	gapeCalibs$Trial = factor(gapeCalibs$Trial)
+	
+	currentID = gapeCalibs$Serial[1]
+#	
 	# Create a unique identifier for each board/channel combination, 
-	# ensuring that the Channel number is always 2 digits 
-	gapeCalibs$ID = factor(paste0(gapeCalibs$Serial,'Ch',
-					ifelse(gapeCalibs$HallChannel<10,
-							paste0('0',gapeCalibs$HallChannel),
-							gapeCalibs$HallChannel)))
+#	# ensuring that the Channel number is always 2 digits 
+#	gapeCalibs$ID = factor(paste0(gapeCalibs$Serial,'Ch',
+#					ifelse(gapeCalibs$HallChannel<10,
+#							paste0('0',gapeCalibs$HallChannel),
+#							gapeCalibs$HallChannel)))
 	# Generate the curve parameters for this board & channel calibration						
-	cRegress = cRegressEstimate(SN, Channel, gapeCalibFile)	
+	cRegress = cRegressEstimate(gapeCalibFile)	
 	# Subset out the chosen board & channel's data
-	dat = gapeCalibs[gapeCalibs$ID == currentID,]
-	dat = droplevels(dat)
+#	dat = gapeCalibs[gapeCalibs$ID == currentID,]
+#	dat = droplevels(dat)
+	dat = gapeCalibs
 	
 	if(plot){
 		par(fig = c(0,1,0,1)) # Set up default main plot extent
@@ -756,115 +699,7 @@ plotCalib <- function(SN,Channel,gapeCalibFile, plot = TRUE, plotpoints = TRUE,
 ```
 		
 
-### SN21 Calibrations
 
-```{r SN21Hall00,echo=showcode, cache=FALSE,fig.cap='SN21Hall00',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN21',Channel = 0,gapeCalibFile, plottext = FALSE, 
-		insetplot = TRUE) 
-```
-
-```{r SN21Hall01,echo=showcode, cache=FALSE,fig.cap='SN21Hall01',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN21',Channel = 1,gapeCalibFile, plottext = FALSE, 
-		insetplot = TRUE)
-```
-
-```{r SN21Hall02,echo=showcode,fig.cap='SN21Hall02',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN21',Channel = 2,gapeCalibFile, plottext = FALSE,  
-		insetplot = TRUE)
-```
-
-```{r SN21Hall03,echo=showcode, cache=FALSE,fig.cap='SN21Hall03',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN21',Channel = 3,gapeCalibFile, plottext = FALSE, 
-		insetplot = TRUE)
-```
-
-```{r SN21Hall04,echo=showcode, cache=FALSE,fig.cap='SN21Hall04',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN21',Channel = 4,gapeCalibFile, plottext = FALSE, 
-		insetplot = TRUE)
-```
-
-```{r SN21Hall08,echo=showcode,fig.cap='SN21Hall08',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN21',Channel = 8,gapeCalibFile, plottext = FALSE, 
-		insetplot = TRUE)
-```
-
-```{r SN21Hall09,echo=showcode, cache=FALSE,fig.cap='SN21Hall09',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN21',Channel = 9,gapeCalibFile, plottext = FALSE, 
-		insetplot = TRUE)
-```
-
-```{r SN21Hall10,echo=showcode, cache=FALSE,fig.cap='SN21Hall10',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN21',Channel = 10,gapeCalibFile, plottext = FALSE, 
-		insetplot = TRUE)
-```
-
-```{r SN21Hall11,echo=showcode, cache=FALSE,fig.cap='SN21Hall11',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN21',Channel = 11,gapeCalibFile, plottext = FALSE,  
-		insetplot = TRUE)
-```
-
-```{r SN21Hall12,echo=showcode, cache=FALSE,fig.cap='SN21Hall12',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN21',Channel = 12,gapeCalibFile, plottext = FALSE, 
-		insetplot = TRUE)
-```
-
-
-### SN20 Calibrations
-
-
-```{r SN20Hall00,echo=showcode, cache=FALSE,fig.cap='SN20Hall00',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN20',Channel = 0,gapeCalibFile, plottext = FALSE, 
-		insetplot = TRUE)
-```
-
-```{r SN20Hall01,echo=showcode, cache=FALSE,fig.cap='SN20Hall01',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN20',Channel = 1,gapeCalibFile, plottext = FALSE,
-		insetplot = TRUE)
-```
-
-```{r SN20Hall02,echo=showcode, cache=FALSE,fig.cap='SN20Hall02',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN20',Channel = 2,gapeCalibFile, plottext = FALSE,
-		insetplot = TRUE)
-```
-
-```{r SN20Hall03,echo=showcode, cache=FALSE,fig.cap='SN20Hall03',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN20',Channel = 3,gapeCalibFile, plottext = FALSE,
-		insetplot = TRUE)
-```
-
-```{r SN20Hall04,echo=showcode, cache=FALSE,fig.cap='SN20Hall04',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN20',Channel = 4,gapeCalibFile, plottext = FALSE,
-		insetplot = TRUE)
-```
-
-
-```{r SN20Hall08,echo=showcode, cache=FALSE,fig.cap='SN20Hall08',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN20',Channel = 8,gapeCalibFile, plottext = FALSE, 
-		insetplot = TRUE)
-```
-
-```{r SN20Hall09,echo=showcode, cache=FALSE,fig.cap='SN20Hall09',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN20',Channel = 9,gapeCalibFile, plottext = FALSE, 
-		insetplot = TRUE)
-```
-
-
-```{r SN20Hall10,echo=showcode, cache=FALSE,fig.cap='SN20Hall10',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN20',Channel = 10,gapeCalibFile, plottext = FALSE,
-		insetplot = TRUE)
-```
-
-
-```{r SN20Hall11,echo=showcode, cache=FALSE,fig.cap='SN20Hall11',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN20',Channel = 11,gapeCalibFile, plottext = FALSE, 
-		insetplot = TRUE)
-```
-
-
-```{r SN20Hall12,echo=showcode, cache=FALSE,fig.cap='SN20Hall12',fig.width=5,fig.height=5,dpi=600}
-plotCalib(SN = 'SN20',Channel = 12,gapeCalibFile, plottext = FALSE, 
-		insetplot = TRUE)
-```
 
 
 
@@ -872,21 +707,12 @@ plotCalib(SN = 'SN20',Channel = 12,gapeCalibFile, plottext = FALSE,
 # Use this chunk to examine a single calibration file by providing the
 # directory name and file name that you want to look at. 
 # Load some data
-fdir = "../data/Calibration/20190514_calibration/"
-fname = 'Hall01_CALIB_00_SN20.csv'
+
+fname = 'SN102_20221202_2140_CALIB.csv'
 # Assemble the directory and file name
-gapeCalibFile = paste0(fdir,fname)
-# Get the Serial number from the file name, match pattern 'SNxx'
-matchVal = regexpr(pattern='SN[[:digit:]]{2}', text = fname)
-# Extract the magnet ID as text
-SN = substr(x=fname,
-		start = matchVal, 
-		stop = matchVal + (attr(matchVal,'match.length')-1))
-# Get channel number, match pattern 'Hallxx'
-matchVal = regexpr(pattern='Hall[[:digit:]]{2}', text = fname)
-Channel = as.numeric(substr(x=fname,
-		start = matchVal+4,
-		stop = matchVal + (attr(matchVal,'match.length')-1)))
+gapeCalibFile = paste0(BivalveBitCalibDir,fname)
+
+
 # Produce the calibration plot and c~log(b) plot
-plotCalib(SN,Channel,paste0(fdir,fname),plottext=TRUE,insetplot=TRUE)
+plotCalib(gapeCalibFile,plottext=TRUE,insetplot=TRUE)
 ```
