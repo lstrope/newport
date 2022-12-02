@@ -7,7 +7,7 @@ editor_options:
 Look at a couple more filtered chunks of time and try to find good HR signals. Try with different oysters and at different times of the day. 
 
 Do with 5 oysters at diff times of the day and get good graphs with consistent HR. 
-j
+
 Butterworth has settings to tweak to change how much smoothing it does. Butterworth targeted for Gabby's sensors so may need to smooth more/less than is written. Look through data first before tweaking. 
 ```{r knitroptions, echo=FALSE, cache=FALSE}
 options(replace.assign = TRUE, width = 60)
@@ -27,44 +27,33 @@ showcode = FALSE # Set true to print out all R code in final document
 ```
 
 ```{r fileLocations, echo=FALSE}
-# Directory path on Luke's machine
+# Directory path on Lauren's machine
 setwd("~/Documents/Oyster/Rcode")
 NewportDir = '../data/Newport_SSINP/'
 WestcliffEelgrassDir = 'Westcliff/Eelgrass/'
+DeAnzaMud142Dir='De Anza/Mud/SN142/'
 
 ```
 
-```{r, echo=FALSE}
+```{r getIRdata, echo=FALSE}
 # Get a list of the IR heart sensor files by looking for filenames that end in IR.csv
-IRfilenames = dir(path = paste0(NewportDir, WestcliffEelgrassDir, 'SN107_2022-07-13_2022-07-30'), full.names=TRUE, pattern= "*IR.csv")
-
-# Get a list of gape (and temperature) filenames by looking for filenames that end
-# in GAPE.csv
-Gapefilenames = dir(path = paste0(NewportDir, WestcliffEelgrassDir, 'SN107_2022-07-13_2022-07-30'), full.names=TRUE, pattern= "*GAPE.csv")
-# These files tend to have a comma after the last column's data, which makes read.csv think there's one more column of data than there are names in the header row, which then treats the 1st column of POSIXt values as row numbers, which is unfortunate. You need to handle that appropriately. 
+#IRfilenames = dir(path = paste0(NewportDir, DeAnzaMud142Dir), full.names=TRUE, pattern= "*IR.csv")
 
 ```
 
 ```{r loadPackages}
-
 library(signal)
 library(pracma)
 library(forecast)
-
-```
-
-```{r fileNamesPaths}
-HeartDir = '~/Documents/Oyster/data/Newport_SSINP/Westcliff/Oyster/SN104_2022-07-13_2022-08-08'
-
 ```
 
 ```{r importHeartFiles, echo=showcode, cache=TRUE}
 #Load files
+HeartDir = '~/Documents/Oyster/data/Newport_SSINP/De Anza/Eelgrass/SN150'
 
 #Pull out IR csv files from HeartDir 
 files = dir(HeartDir, full.names=TRUE,
 				pattern = '*IR.csv')
-		
 
 for (i in 1:length(files)){
 	hdr  = scan(files[i], nlines = 1, what = character(),sep = ',')
@@ -74,15 +63,15 @@ for (i in 1:length(files)){
 #			temp = read.csv(files[i])
 
 	if (i == 1) {
-		surfHeart = temp
+		Heart = temp
 	} else if (i > 1){
-		surfHeart = rbind(surfHeart,temp)
+		Heart = rbind(Heart,temp)
 	}
 }
 # Convert time stamps to POSIX
-surfHeart$DateTime = as.POSIXct(surfHeart$DateTime, tz = 'UTC')
-surfHeart$DateTimePST = surfHeart$DateTime
-attr(surfHeart$DateTimePST,'tzone') = 'etc/GMT+8' # Create Pacific Standard Time version
+Heart$DateTime = as.POSIXct(Heart$DateTime, tz = 'UTC')
+#Heart$DateTimePST = Heart$DateTime
+#attr(Heart$DateTimePST,'tzone') = 'etc/GMT+8' # Create Pacific Standard Time version
 
 ```
 
@@ -92,43 +81,16 @@ attr(surfHeart$DateTimePST,'tzone') = 'etc/GMT+8' # Create Pacific Standard Time
 
 Fs = 0.125 # 8Hz sampling rate, sampling interval = 0.125 seconds
 # Step through 1 minute at a time
-mytime = as.POSIXct('2022-07-28 01:15:00',tz='UTC')
+mytime = as.POSIXct('2022-07-25 10:50:00',tz='UTC')
 mysensor = 'IR'
-t1 = which.min(abs(surfHeart$DateTime - mytime)) #compares all times to "my time" to find "my time". T1 gives index for "smallest difference". 
+t1 = which.min(abs(Heart$DateTime - mytime)) #compares all times to "my time" to find "my time". T1 gives index for "smallest difference". 
 chunklength = 240 # number of samples to use
 # Test that we've hit the chosen minute (not just the closest time)
 #if (difftime(mytime,surfHeart$DateTime[t1], units = 'secs') == 0){
-if (difftime(mytime,surfHeart$DateTime[t1], units = 'secs') %in% c(-2,-1,0,1,2)){
+if (difftime(mytime,Heart$DateTime[t1], units = 'secs') %in% c(-2,-1,0,1,2)){
 	# Extract a chunk of samples slightly longer than target length
-	temp = surfHeart[t1:(t1+(chunklength-1)),]
-#Was to check gaps in Gabby's data, if gap was too big then use chunk before. But I have no gaps. 
-#	diffs = diff(temp$startMillis)
-#	missedReads = which(diffs > 100)
-	# Check if there are any sampling gaps (missedReads)
-#	if (length(missedReads) > 0){
-		# Add on the final row as well
-#		missedReads = c(missedReads, (nrow(temp)+1) )
-		# Calculate gap length between any missed reads (and the final read)
-#		testgaps = diff(missedReads) 
-#		if (missedReads[1] > chunklength){
-			# In this case, just grab the first 300 readings
-#			temp = temp[1:chunklength,]
-#		} else if (length(which(testgaps>= chunklength)) > 0){
-			# check if any of the testgaps values are >= chunklength
-			# Get the index in temp that is at the start of the long run
-#			tempindx = missedReads[which(testgaps >= chunklength)] + 1
-			# If a gap is > 300, grab the sample in that gap
-#			temp = temp[tempindx:(tempindx+chunklength-1),]
-#		} else if (length(which(testgaps>=chunklength)) == 0) {
-			# In this case there may be multiple gaps in the time chunk, 
-			# so that there are no good contiguous chunks of 300 readings
-			# Return a data frame with NAs
-#			temp[,sensor] = NA 			
-#		}
-#	} else if (length(missedReads) == 0) {
-		# Subset down to exactly the chunk length (10Hz sample * 30 secs = 300 samples)
-#		temp = temp[1:chunklength,]
-	}
+	temp = Heart[t1:(t1+(chunklength-1)),]
+  }
 
 	# Add milliseconds onto the timestamps. So there is datetime for each reading down to the millisecond. Add 0.125 seconds to each reading. Very last reading is the last millisecond in 30 seconds. (30.875seconds). 
 
@@ -137,6 +99,9 @@ if (difftime(mytime,surfHeart$DateTime[t1], units = 'secs') %in% c(-2,-1,0,1,2))
 	#diffs = diff(temp$startMillis) / 1000
 	temp$DateTimeMS[2:nrow(temp)] = temp$DateTimeMS[1] + cumsum()
 	
+	#diffs = diff(temp$startMillis) / 1000
+  #temp$DateTimeMS[2:nrow(temp)] = temp$DateTimeMS[1] + cumsum(diffs)
+	
 #Make loop from row 1:240 that takes previous row and adds on 0.125. 
 #Go through first 240 rows, then after hit 240-> reset time using DateTime and start adding again. Then after another 240, reset time and start again. If jumped 240 rows and didn't see POSIXct time value at the end, then stop b/c didn't take 240 measurements. 
 for(j in 2:240){
@@ -144,47 +109,47 @@ for(j in 2:240){
 }
 
 #go through surfHeart and plot each 240 chunk to see if can see HR. Make function that fills in timestamps to each 240 chunk so don't have to pull out chunks first. 
-plot(x=temp$DateTimeMS, y=temp$IR, type="l", main="PCH Oyster SN118 2022-08-02 24:15:00")
+plot(x=temp$DateTimeMS, y=temp$IR, type="l", main="De Anza Mud SN142 2022-07-28 00:20:00")
 
 	# Handle cases where single very low values appear due to spurious values
 	# being recorded in the dataset. Replace with a linear interpolation of
 	# of the two neighboring values. First detrend the raw values
 #detrend fits regression through points, figures out slope, takes out slope from all values to get rid of slow trend down or up in IR rates for the plots. 
-	detrendedIR = pracma::detrend(temp[,mysensor])
-	# Next look at the detrended values and look for spurious low values
-	# For instance, a good heart signal might oscillate between -200 & +300
-	# in the detrended data, and a spurious value might suddenly drop to 
-	# -6000. 
-	# Calculate the standard deviation of the data set, and then find values
-	# that are more than 3 SD away from the mean (which should be ~zero in the
-	# detrended data)
-#take out outliers essentially. Take out data points >3x SD
-	spuriousVals = which(abs(detrendedIR) > (3*sd(detrendedIR)) )
-
-
-
-	if ( length(spuriousVals) > 0) {
-		# Convert to NAs 
-		temp[spuriousVals,mysensor] = NA
-		
-		for (i in 1:length(spuriousVals)){
-		  indx = spuriousVals[i] 
-		  #if spuriousVals=first row then truncate out value from temp
-		  if(indx==1){
-		    temp=temp[2:nrow(temp),]
-		  } else if(indx==2){
-		    temp=temp[2:nrow(temp),]
-		  } else if(indx>2){
-		    # Get the row index for this spurious value
-			# Replace the spurious value with the average of the values immediately
-			# before and after the spurious value
-#				temp[indx,sensor] = mean(c(temp[indx-1,sensor],temp[indx+1,sensor]))
-			temp[indx,mysensor] = mean(temp[(indx-2):(indx+2),mysensor], na.rm=TRUE)
-		  }
-			 
-		}
-	}
-	rm(spuriousVals)
+# 	detrendedIR = pracma::detrend(temp[,mysensor])
+# 	# Next look at the detrended values and look for spurious low values
+# 	# For instance, a good heart signal might oscillate between -200 & +300
+# 	# in the detrended data, and a spurious value might suddenly drop to 
+# 	# -6000. 
+# 	# Calculate the standard deviation of the data set, and then find values
+# 	# that are more than 3 SD away from the mean (which should be ~zero in the
+# 	# detrended data)
+# #take out outliers essentially. Take out data points >3x SD
+# 	spuriousVals = which(abs(detrendedIR) > (3*sd(detrendedIR)) )
+# 
+# 
+# 
+# 	if ( length(spuriousVals) > 0) {
+# 		# Convert to NAs 
+# 		temp[spuriousVals,mysensor] = NA
+# 		
+# 		for (i in 1:length(spuriousVals)){
+# 		  indx = spuriousVals[i] 
+# 		  #if spuriousVals=first row then truncate out value from temp
+# 		  if(indx==1){
+# 		    temp=temp[2:nrow(temp),]
+# 		  } else if(indx==2){
+# 		    temp=temp[2:nrow(temp),]
+# 		  } else if(indx>2){
+# 		    # Get the row index for this spurious value
+# 			# Replace the spurious value with the average of the values immediately
+# 			# before and after the spurious value
+# #				temp[indx,sensor] = mean(c(temp[indx-1,sensor],temp[indx+1,sensor]))
+# 			temp[indx,mysensor] = mean(temp[(indx-2):(indx+2),mysensor], na.rm=TRUE)
+# 		  }
+# 			 
+# 		}
+# 	}
+# 	rm(spuriousVals)
 	# With the spurious values replaced by interpolated values, re-run the 
 	# detrending routine
 	########################################
@@ -265,7 +230,7 @@ lines(y) #add smooth version in black on top of graph
 
 ``` 
 
-```{r}
+```{r getBPMfunction}
 getBPM = function(x,t1 = 1, sensor = 'Sensor1IR',chunklength=300, 
 		lowband = 1/60, 
 		highband = 1/10, 
@@ -411,11 +376,11 @@ getBPM = function(x,t1 = 1, sensor = 'Sensor1IR',chunklength=300,
 
 ```{r exampleHeartPlot, echo=showcode,dev='png',fig.width=5,fig.height=5,res=300}
 
-mytime = as.POSIXct('2022-07-28 00:30:00',tz='etc/GMT+8')
+mytime = as.POSIXct('2022-07-28 00:20:00',tz='UTC')
 mysensor='IR'
-t1 = which.min(abs(surfHeart$DateTimePST - mytime))
+t1 = which.min(abs(Heart$DateTimePST - mytime))
 chunklength = 300
-temp = surfHeart[t1:(t1+(chunklength*2)),]
+temp = Heart[t1:(t1+(chunklength*2)),]
 Fs = 0.125
 
 diffs = diff(temp$startMillis)
@@ -569,19 +534,19 @@ mtext(side = 2, text = 'Detrended IR signal', line = 4, cex = mycex)
 # Step through 1 minute at a time
 mytime = as.POSIXct('2022-07-28 00:30:00',tz='etc/GMT+8')
 
-timesteps = seq(surfHeart$DateTimePST[1],surfHeart$DateTimePST[nrow(surfHeart)],by = 60)
+timesteps = seq(Heart$DateTimePST[1],Heart$DateTimePST[nrow(Heart)],by = 60)
 
 pb = txtProgressBar(min = 0, max = length(timesteps), style = 3)
 
 # Sensor1
 for (i in 1:length(timesteps)){
 	setTxtProgressBar(pb,i)
-	t1 = which.min(abs(surfHeart$DateTimePST - timesteps[i]))
+	t1 = which.min(abs(Heart$DateTimePST - timesteps[i]))
 	# Test that we've hit the chosen minute (not just the closest time)
-	if (difftime(timesteps[i],surfHeart$DateTimePST[t1], units = 'secs') == 0){
+	if (difftime(timesteps[i],Heart$DateTimePST[t1], units = 'secs') == 0){
 		
 		# Sensor 1
-		res1 = getBPM(surfHeart,t1 = t1, sensor = 'Sensor1IR')
+		res1 = getBPM(Heart,t1 = t1, sensor = 'Sensor1IR')
 		if (i == 1) {
 			Sensor1Result = as.data.frame(res1)
 			Sensor1Result[2:length(timesteps),] = NA
@@ -590,7 +555,7 @@ for (i in 1:length(timesteps)){
 		}
 		
 		# Sensor 2
-		res2 = getBPM(surfHeart,t1 = t1, sensor = 'Sensor2IR')
+		res2 = getBPM(Heart,t1 = t1, sensor = 'Sensor2IR')
 		if (i == 1) {			
 			Sensor2Result = as.data.frame(res2)
 			Sensor2Result[2:length(timesteps),] = NA
@@ -599,7 +564,7 @@ for (i in 1:length(timesteps)){
 		}
 		
 		# Sensor 3
-		res3 = getBPM(surfHeart,t1 = t1, sensor = 'Sensor3IR')
+		res3 = getBPM(Heart,t1 = t1, sensor = 'Sensor3IR')
 		if (i == 1) {			
 			Sensor3Result = as.data.frame(res3)
 			Sensor3Result[2:length(timesteps),] = NA
@@ -608,7 +573,7 @@ for (i in 1:length(timesteps)){
 		}
 		
 		# Sensor 4
-		res4 = getBPM(surfHeart,t1 = t1, sensor = 'Sensor4IR')
+		res4 = getBPM(Heart,t1 = t1, sensor = 'Sensor4IR')
 		if (i == 1) {			
 			Sensor4Result = as.data.frame(res4)
 			Sensor4Result[2:length(timesteps),] = NA
