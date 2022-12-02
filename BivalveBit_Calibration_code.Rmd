@@ -10,6 +10,11 @@ output:
 
 ```{r knitSetup, echo=FALSE}
 showcode = FALSE # Set true to print out all R code in final document
+
+# Comment out one of the two localpath lines below depending on what computer you're on
+localpath = '../../data/'  # Luke's path
+#localpath = '../data/'  # Lauren's path
+
 ```
 
 # Calibration walk-through
@@ -586,7 +591,7 @@ for each Distance, from multiple starting points. We see good correspondence
 between the fitted values and observed values, indicating that the estimated
 coefficients
 
-```{r trialCurveFitting, echo=FALSE,dpi=300,fig.width=5,fig.cap='Observed readings (open circles) and fitted values (closed circles) derived from nls curve fitting routine.'}
+```{r trialCurveFitting, echo=FALSE, eval = FALSE, dpi=300,fig.width=5,fig.cap='Observed readings (open circles) and fitted values (closed circles) derived from nls curve fitting routine.'}
 ## Example of code to fit curves to each Trial for a given sensor, followed by
 # showing the predicted values from the curve fits afterwards. 
 
