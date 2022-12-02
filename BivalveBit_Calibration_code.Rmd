@@ -1,0 +1,887 @@
+---
+title: "Gape Tracker calibration code"
+author: "Luke Miller"
+output: 
+  word_document:
+    fig_caption: yes
+    fig_height: 5
+    fig_width: 5
+---
+
+```{r knitSetup, echo=FALSE}
+showcode = FALSE # Set true to print out all R code in final document
+```
+
+# Calibration walk-through
+
+## Fall 2022
+We calibrated individual Hall effect gape sensors attached to BivalveBit
+boards. The Allegro A1395 Hall effect sensor was used
+for all of these sensors. 
+
+We calibrated using a set of neodymium magnets (Digikey part
+number 469-1005-ND), so that all sensors could use the same magnet type. 
+Magnets were covered in adhesive-lined heat shrink to waterproof them, and
+the polarity of each magnet was marked with a silver paint pen to facilitate
+proper installation on the oyster. 
+
+Calibration was done using a KD Scientific Model 200 syringe pump to move
+the magnet known distances away from the Hall effect sensor. The syringe
+pump was set to move the magnet in 0.3175 mm steps, starting near the 
+Hall sensor and moving away from it, up to a maximum of 12.3825 mm from the
+starting point, which we arbitrarily call 0.0 mm. A calibration program,
+`Hall_calibration_routine.ino` was uploaded to the BivalveBit
+boards for calibration. The program wrote csv files to the onboard micro SD
+card. Each file contained the following columns:
+
+* `Serial` - BivalveBit board serial number (i.e. SN102, SN103)
+* `Trial` - the trial number for this calibration series. Usually 1-10,
+  unless trials had to be deleted due to syringe pump issues.
+* `Distance.mm` - the assumed distance the syringe pump carriage had
+  moved from the initial starting position (defined as 0.0mm, although 
+  there was always a gap between the magnet and the Hall effect sensor).
+* `Reading` - the analog-to-digital converter value from the
+  BivalveBit's ATmega4808 onboard A-D (10 bit maximum precision, 0-1023)
+  The magnets and sensors were oriented so that readings were low when 
+  the magnet was closest to the sensor, and increased towards 512 as
+  the magnet moved away from the sensor. In practice the minimum
+  values were around 10-15 before the sensor saturated, and the
+  maximum was around 450-480 when the magnet had moved at least 12.3
+  mm away from the sensor.
+  
+Calibration files were arranged in folders by date, and each file name
+followed the pattern `SNxxx_YYYYMMDD_HHMM_CALIB.csv`, with xxx = the board's
+serial number and `YYYYMMDD_HHMM` marking the date and time of the trial.
+
+Each calibration trial was set with the Hall sensor attached to the 
+syringe pump so that the bottom of the sensor board was pointing
+towards the magnet (the same as it would be oriented on the shell of the
+animal). The magnet was attached to the moving carriage portion of
+the syringe pump. The magnet was moved near the sensor to establish
+a starting value (usually between 40 and 400 counts). The software
+then began by taking a set of 4 Hall effect readings and averaging
+them, storing that average in the csv file, and then moving the
+carriage 0.3175 mm before taking the next reading. This cycle would
+repeat until the maximum distance of 12.3 mm was reached, after
+which the carriage was reset near the Hall sensor for the next
+trial. The starting orientation of the magnet and Hall sensor would
+be altered slightly for each trial, so that a sample of different
+alignments could be measured. The goal was to cover the range of
+possible alignments that might occur when the sensor and magnet were
+glued to the shell of the animal. 
+
+On occasion the moving carriage of the syringe pump would not fully engage with
+the lead screw, and the correct movement would not be achieved until the
+carriage snapped into place. This would be noted by the operator, and the data
+for that trial would be later removed from the data file.  
+
+Once the calibration trials were completed, the data were saved to
+the project folder. In
+cases where one or more trials in a file were suspect due to the
+carriage not engaging properly, the rows for that trial were
+deleted from the data file, so the resulting csv files should only
+contain known-good trials. 
+
+
+
+
+## Using the calibration data
+
+
+
+```{r gapeFunctions, echo=showcode}
+
+# A set of functions originally taken from MussleTracker_data_proc4.R to 
+# handle the gape data
+		
+		################################################################################
+# exciseTempHall: A function to excise questionable rows of data from the 1-Hz 
+# temperature and Hall effect sensor data frame
+# Inputs:
+#	temphall: a data frame of temperature and hall effect data from the
+#			Mussel Tracker raw data files
+#	excisedf: a data frame of start and end times to ignore in the data set
+# Output:
+# 	temphall: a modified version of the input data frame with the questionable
+#			rows replaced with NAs. 
+		
+#' A function to excise questionable rows of data from the 1-Hz 
+#' temperature and Hall effect sensor data frame
+#' @param temphall A data frame of temperature and hall effect data from the
+#'			Mussel Tracker raw data files
+#' @param excisedf A data frame of start and end times to ignore in the data set 
+#' @return temphall A data frame with 2 columns, Start and End, which contain 
+#' the row indices for the first good and last good values in each contiguous 
+#' run of numeric values. 
+		
+		exciseTempHall = function(temphall, excisedf) {
+	# Find the rows in excisedf that have the same serial number as the current
+	# board, and have time points to remove for each channel and sensor combo
+	# Start with Ch1 Temperature
+	matches = which(excisedf$SerialNumber == levels(temphall$SerialNumber)[1] &
+					excisedf$Mussel == 'Ch1' & excisedf$Sensor == 'Temp')
+	if (length(matches) > 0){
+		for (i in 1:length(matches)){
+			startrow = which.min(abs(temphall$DateTime - 
+									excisedf$StartIgnore[matches[i]]))
+			endrow = which.min(abs(temphall$DateTime - 
+									excisedf$EndIgnore[matches[i]]))
+			# blank out the suspect rows of data
+			temphall$Temp1[startrow:endrow] = NA
+		}
+	}
+	# Do the same for Channel 2 temperature
+	matches = which(excisedf$SerialNumber == levels(temphall$SerialNumber)[1] &
+					excisedf$Mussel == 'Ch2' & excisedf$Sensor == 'Temp')
+	if (length(matches) > 0){
+		for (i in 1:length(matches)){
+			startrow = which.min(abs(temphall$DateTime - 
+									excisedf$StartIgnore[matches[i]]))
+			endrow = which.min(abs(temphall$DateTime - 
+									excisedf$EndIgnore[matches[i]]))
+			# blank out the suspect rows of data
+			temphall$Temp2[startrow:endrow] = NA
+		}
+	}
+	# Next remove bad data from Hall sensor Ch1
+	matches = which(excisedf$SerialNumber ==levels(temphall$SerialNumber)[1] &
+					excisedf$Mussel == 'Ch1' & excisedf$Sensor == 'Hall')
+	if (length(matches) > 0){
+		for (i in 1:length(matches)){
+			startrow = which.min(abs(temphall$DateTime - 
+									excisedf$StartIgnore[matches[i]]))
+			endrow = which.min(abs(temphall$DateTime - 
+									excisedf$EndIgnore[matches[i]]))
+			# blank out the suspect rows of data
+			temphall$Hall1[startrow:endrow] = NA
+		}
+	}
+	# And remove bad data from Hall sensor Ch2
+	matches = which(excisedf$SerialNumber == levels(temphall$SerialNumber)[1] &
+					excisedf$Mussel == 'Ch2' & excisedf$Sensor == 'Hall')
+	if (length(matches) > 0){
+		for (i in 1:length(matches)){
+			startrow = which.min(abs(temphall$DateTime - 
+									excisedf$StartIgnore[matches[i]]))
+			endrow = which.min(abs(temphall$DateTime - 
+									excisedf$EndIgnore[matches[i]]))
+			# blank out the suspect rows of data
+			temphall$Hall2[startrow:endrow] = NA
+		}
+	}
+	temphall # return data frame as output
+} # End of exciseTempHall function
+
+###############################################################################	
+# A function to determine where there are gaps of missing data, so that we can 
+# apply a filter to the good chunks of data. Most filters fail if there are NAs
+# present, and our remaining gaps in the data are big enough that they probably
+# shouldn't be smoothed-over anyhow. 
+#' A function to find the start and end indices of numeric data in a vector. 
+#' Useful for dealing with timeseries that have gaps, and operations that need
+#' to operate the separate chunks of contiguous numeric values
+#' @param value A vector of numeric values, with NAs 
+#' @return A data frame with 2 columns, Start and End, which contain the row
+#' indices for the first good and last good values in each contiguous run of
+#' numeric values. 	
+gapBounds <- function (values){
+	# This function returns a data frame of 2 columns, start + end, that give
+	# the row indices of the start and end of each run of good data in the 
+	# input vector. It should handle data streams that start with NAs and
+	# should handle streams that end with NAs. 
+	
+	# Use run length encoding function to find NA gaps
+	gaps = rle(is.na(values))
+	# If the first entry in gaps is TRUE, this indicates that the data started
+	# with NA values.
+	if (gaps$values[1] == TRUE) {
+		startNA = TRUE	# Data started with NAs
+	} else {	
+		startNA = FALSE	 # Data started with real values
+	}
+	# If the last entry in gaps is TRUE, the data end on NAs
+	if (gaps$values[length(gaps$values)] == TRUE){
+		endNA = TRUE	# Data ends with NAs
+	} else {
+		endNA = FALSE	# Data ends with real values
+	}
+	
+	# The number of gaps with value == TRUE is the number of good runs of data
+	# and gaps with value == FALSE are the starts of runs of NAs. This will
+	# get the number of FALSE (negated to TRUE) values in gaps. A dataset
+	# ending in good data will have a last entry in gaps of FALSE. 
+	numgaps = sum(!gaps$values)
+	
+	# Create the output data frame
+	results = data.frame(Start = integer(numgaps), End = integer(numgaps))
+	
+	if (!startNA) {
+		# If startNA == FALSE (started on good data, the first entry should 
+		# always be 1 (1st row) 
+		# If there are no gaps, the
+		# contents of gaps$lengths will just be the length of the values vector
+		results$Start[1] = 1
+		results$End[1] = gaps$lengths[1]
+	} else if (startNA){
+		# However, if the dataset starts with NAs, the first entry in gaps will
+		# be the index of the first good data, while the 2nd entry will be the 
+		# start of the next stretch of NAs
+		results$Start[1] = gaps$lengths[1]+1
+		results$End[1] = sum(gaps$lengths[1:2])
+	}
+	
+	# If there is more than 1 entry in gaps$lengths, process the other gaps
+	j = 2; # counter
+	if (numgaps > 1){
+		if (!startNA & endNA){
+			# If the dataset ends on NAs (TRUE last), truncate gapind by 1
+			gapind = seq(2,length(gaps$lengths)-1, by = 2)
+		} else if (!startNA & !endNA) {
+			# If the dataset ends on good values (FALSE last)
+			gapind = seq(2,length(gaps$lengths), by = 2)
+		} else if (startNA & endNA) {
+			# If dataset starts on NAs (TRUE 1st) and ends on NAs (TRUE last)
+			gapind = seq(3, length(gaps$lengths)-1, by = 2)
+		} else if (startNA & !endNA) {
+			# If dataset starts on NAs (TRUE 1st) and ends on good data 
+			# (FALSE last)
+			gapind = seq(3, length(gaps$lengths), by = 2)
+		}	
+		# Step through the rest of the gaps object to find the start and end
+		# points of each stretch of good data. 
+		for (i in gapind){
+			nextstart = sum(gaps$lengths[1:i]) + 1
+			nextend = sum(gaps$lengths[1:(i+1)])
+			results$Start[j] = nextstart
+			results$End[j] = nextend
+			j = j + 1
+		}
+	} # end of if (numgaps > 1)
+	results	# return the results dataframe, 2 columns Start and End
+}
+
+################################################################################
+### hallFilter function
+#' A function to apply a Butterworth 1st order low-pass filter to a vector
+#'  of data. If there are NA values in the original data, they will be 
+#'  preserved in the output vector. The filter is set to filter at 1/10 the
+#' original sampling rate (which is 1Hz normally), producing an approximate
+#' 10-second window of smoothing. Raw input data are initially centered on 0
+#' to avoid artifacts at the start of the filter, and the output is re-centered
+#' at the original starting value after the filtering is applied. 
+#' @param hallData A vector of hall effect data.
+#' @return A vector of filtered hall effect sensor data. 
+hallFilter = function(hallData){	
+	# Define a butterworth low-pass filter, 1st order, to filter at 1/10 the 
+	# sampling rate (which was 1Hz)
+	myfilter = butter(1,0.1,type='low', plane = 'z')
+	# Find the start and end of any gaps in the data set using the gapBounds
+	# function defined earlier
+	mygaps = gapBounds(hallData)
+	# Apply the filter to the good runs of data
+	for (i in 1:nrow(mygaps)){
+		# Extract the run of good data
+		dats = hallData[mygaps$Start[i]:mygaps$End[i]]
+		# Find the offset of the data from zero
+		offset = dats[1]
+		# Subtract the offset off of all of the data in this run
+		# (The butterworth filter returns large transient values at the start
+		# of the run if the value is much different from zero)
+		dats = dats - offset
+		# Call the filter routine to apply the filter
+		yfiltered = signal:::filter(myfilter,dats)
+		# Add the offset back on so the data are back on their original scale
+		yfiltered = yfiltered + offset
+		# Write the filtered data back into the data vector
+		hallData[mygaps$Start[i]:mygaps$End[i]] = yfiltered
+	}
+	# Round the filtered data back to the nearest whole number, since these
+	# represent ADC count data.
+	hallData = round(hallData)
+	hallData	# return vector of filtered data
+}
+
+################################################################################
+# Define a non-linear function that allows you to plug in a Hall effect sensor
+# count value and generate an approximate distance in mm. Supply the 
+# coefficients a, b, c, based on a nls curve fit for counts as a function of
+# distance. 
+# In the above equation, 'a' is the effective asymptotic value
+# 'b' is the range of values between the minimum observed count and the 
+# asymptotic count (so a min count of 400 and asymptote of 500 gives b = 100)
+# 'c' is effectively a curvature parameter. Larger values of 'c' yield a 
+# smaller change in Distance as Counts increases (when back-calculating 
+# Distance), particularly for low Counts values. 
+#' A function to back-calculate an asymptotic function to generate a distance
+#' value based on a hall effect sensor count value input.
+#' 
+#' @param Counts A vector of hall effect sensor values, usually between 0 and 
+#' 512 (from a 10-bit analog-to-digital converter). 
+#' @param a A parameter derived from an asymptotic curve fit, representing the
+#' asymptotic count value
+#' @param b A parameter derived from an asymptotic curve fit, representing the 
+#' range from the minimum count up to the asymptotic value. 
+#' @param c A parameter derived from an asymptotic curve fit, representing the
+#' curvature of the fit. 
+#' @returns A vector of distance values of the same length as Counts. Any input 
+#' values equal or larger than the asymptotic parameter a will return Inf.
+
+DistFromCounts <- function(Counts, a,b,c){
+	dist = (log((Counts - a)/(-1*b))) / (-1*c)
+	dist
+}
+
+
+################################################################################
+### percentileRange function
+# Define a function to calculate the average reading for the upper and lower
+# x percentile of the hall effect data. 
+#' Calculate the average of the specified lower percentile and upper percentile
+#' and return the values that correspond to those means (rounded to integers).
+#' 
+#' @param hallData A vector of analog-to-digital convertor counts from a 
+#' Hall effect sensor. The values are assumed to start low (<512) when the 
+#' magnetic signal is strong (close to sensor) and increase towards 512 when
+#' the magnetic signal is weak (far from sensor).
+#' @param percentileLim A numeric value between 0 and 1, usually close to 0.01
+#' used to define the lower and upper percentile limits (mirrored). A value of 
+#' 0.01 would cause the 1st and 99th percentile sensor values to be used as the
+#' lower and upper limits
+#' @return A two element vector for the lower and upper values in hallData that
+#' represent the lower and upper percentiles
+
+percentileRange <- function (Hallvec, percentileLim = 0.01){
+	# Remove any NA's
+	temp = Hallvec[!is.na(Hallvec)]
+	# Reorder the values smallest to largest
+	temp = temp[order(temp)]
+	# Get the index of the entry closest to percentileLim
+	indx = round(percentileLim * length(temp))
+	# Calculate the mean value for the lower 1% of closed valve values and
+	# round down to the next integer value
+	closedVal = floor(mean(temp[1:indx]))
+	
+	# Now do the same for the other end of the range of hall effect values
+	# These would normally represent "fully open" readings near 512 if the 
+	# magnet and sensor are situated so that a nearby magnet drives the signal
+	# below 512. 
+	indx = round((1 - percentileLim) * length(temp))
+	# Calculate the mean value for the upper 1% of open valve values and round
+	# up to the next integer value
+	openVal = ceiling(mean(temp[indx:length(temp)]))
+	result = c(closedVal, openVal)
+	result # return the two values, always smallest then largest
+}
+
+################################################################################
+### calcPercentGapeNLME function
+# Use this function to calculate the percentage gape (0-100%)
+# This calculates the baseline fully-closed and fully-open values based
+# on the upper and lower 1% of hall effect sensor data for the given range
+# of rows in the input dataset. 
+# Supply a vector of Hall effect sensor data. This function will find any 
+# gaps in the vector (NA's) and calculate a new baseline for each section of
+# good data. 
+#' Convert hall effect count data (integer values from analog-digital converter)
+#' into percent gape values between 0 and 100\%. 
+#' 
+#' @param hallData A vector of analog-to-digital convertor counts from a 
+#' Hall effect sensor. The values are assumed to start low (<512) when the 
+#' magnetic signal is strong (close to sensor) and increase towards 512 when
+#' the magnetic signal is weak (far from sensor).
+#' @param cRegress A linear model object (lm) for the relationship of 'c' versus
+#' the log-transform of 'b'. 
+#' @param percentileLim A numeric value between 0 and 1, usually close to 0.01,
+#' used to define the lower and upper percentile limits (the upper limit is 
+#' mirrored from the lower limit). A value of 
+#' 0.01 would cause the 1st and 99th percentile sensor values to be used as the
+#' lower and upper limits.
+#' @return A vector of the same length as hallData containing percentage values 
+#' 0 to 100, representing the shell valve gape 
+#' opening. A value of 0 is a fully closed shell (strong magnetic signal) and
+#' 100 is a fully open shell (weak magnetic signal).
+
+calcPercentGapeNLME <- function (hallData, cRegress, percentileLim = 0.01){
+	require(nlme)
+	# Get the row indices for the major gaps that exist now
+	mygaps = gapBounds(hallData)
+	# Create an empty output vector of the same length as the input data. 
+	outputData = vector(mode = 'numeric', length = length(hallData))
+	outputData[] = NA # Convert all the values to NA to begin with
+	
+	# Now for each section of the input data, calculate the percent gape. This
+	# involves using the entries in mygaps to subset the input data and 
+	# calculate individual percentile values for each contiguous section of
+	# data. If there is a significant gap in the data (usually > 30 sec), the
+	# percentages will be re-calculated for each contiguous section of data. 
+	# This should accommodate any sensor/magnet re-glueing issues. 
+	for (i in 1:nrow(mygaps)){
+		st = mygaps$Start[i]
+		end = mygaps$End[i]
+		# First calculate the upper and lower 1% values of the Hall readings
+		# These will be count values representing the fully closed (lowest) 
+		# and fully open (highest, closest to 512) values.
+		myrange = percentileRange(hallData[st:end], 
+				percentileLim = percentileLim)
+		
+		# Now truncate count values that are outside myrange to the limits of
+		# myrange. 
+		rowIndices = which(hallData[st:end] < myrange[1])
+		hallData[(st+rowIndices)] = myrange[1]
+		rowIndices = which(hallData[st:end] > myrange[2])
+		hallData[(st+rowIndices)] = myrange[2]
+		
+#		hallData[which(hallData[st:end] < myrange[1])] = myrange[1]
+#		hallData[which(hallData[st:end] > myrange[2])] = myrange[2]
+
+		# The count values are now constrained within a range that should 
+		# encompass fully closed (0mm) to fully open (~5mm gape). Now calculate
+		# the approximate gape opening based on the count values and a curve
+		# fit. 
+		
+		# Define the three asymptotic curve parameters a,b,c using the data for
+		# the current chunk of data.
+		aVal = max(hallData[st:end],na.rm=TRUE)+1 # add 1 count to avoid Inf output
+		bVal = max(hallData[st:end],na.rm=TRUE) - 
+				min(hallData[st:end],na.rm=TRUE)
+		# Calculating c requires the linear model object supplied as cRegress,
+		# which will use the log-transformed 'b' value to estimate the 'c'
+		# parameter
+		cVal = predict(cRegress, newdata = list(b = bVal))
+		
+		# Use DistFromCounts function to estimate valve gape distance using the 
+		# input hall effect count data at each time point and the 
+		# parameters a,b,c
+		temp2 = DistFromCounts( hallData[st:end], 
+				a = aVal,
+				b = bVal,
+				c = cVal)
+		
+		# Replace any fully-open Inf values with the largest good max distance
+		temp2[is.infinite(temp2)] = max(temp2[is.finite(temp2)])
+		# Replace any negative distance values with the 0 distance value
+		temp2[which(temp2 < 0)] = 0
+		# Convert to percentage by dividing all distances by the maximum value
+		outputData[st:end] = (temp2 / max(temp2,na.rm=TRUE)) * 100
+		
+		# Round the values off to a reasonable precision
+		outputData[st:end] = round(outputData[st:end],1)
+		
+	}	
+	outputData	# return the output data vector
+}	# end of calcPercentGapeNLS function
+
+
+################################################################################
+################################################################################
+# Function cRegressEstimate
+# Currently this represents the best data showing how the relationship between
+# magnet signal and distance is repeatable and consistent among different
+# magnets (all from the same batch/part number). As such, a non-linear curve
+# can be fit to the various calibration runs to generate a set of 
+# coefficients a,b,c for an asymptotic curve. Then the values from a field 
+# mussel can be analyzed to determine the asymptotic maximum count value
+# (widest opening) and minimum count value (fully closed), which give us the
+# parameters for coefficients a and b in the curve fit. Because the curvature
+# coefficient 'c' of the curves is very linear with respect to the coefficient
+# 'b' (range of readings), we can plug in the max vs. min range for a particular
+# mussel and use that to predict the appropriate curve coefficient 'c' to use
+# for that mussel. 
+
+#' A function to generate a set of hall effect calibration data and estimate
+#' the relationship between parameters 'b' and 'c', for later use in the 
+#' function calcPercentGapeNLME(). 
+#' @param SN A text string naming the board serial number, in the form 'SN21'
+#' @param Channel numeric value naming the Hall effect sensor channel to be 
+#' calibrated (expected values 0-15). 
+#' @param gapeCalibFile A text path to the file that holds Hall effect
+#' calibration data
+#' @return cRegress A linear model object representing the best fit regression
+#'  of parameter 'c' on the log-transformed parameter 'b'. 
+
+cRegressEstimate <- function(SN, Channel, gapeCalibFile){
+	require(nlme)
+	# Create an identifier for the board/channel combination 'SN21Ch01'
+	if (Channel < 10){
+		newChannel = paste0('0',as.character(Channel))
+	} else {
+		newChannel = as.character(Channel)
+	}
+	currentID = paste0(SN,'Ch',newChannel)
+	 
+	# Get list of calibration data
+	gapeCalibs = read.csv(gapeCalibFile)
+
+	gapeCalibs$Serial = factor(gapeCalibs$Serial)
+	gapeCalibs$Trial = factor(gapeCalibs$Trial)
+	# Create a unique identifier for each board/channel combination,
+	# ensuring that the Channel number is always 2 digits
+	gapeCalibs$ID = factor(paste0(gapeCalibs$Serial,'Ch',
+					ifelse(gapeCalibs$HallChannel<10,
+							paste0('0',gapeCalibs$HallChannel),
+							gapeCalibs$HallChannel)))
+
+# For any instance where magnet was set up so that values climbed above 512
+# when close to the sensor, reverse those values so they are all less than 
+# 512. 
+	for (i in 1:length(levels(gapeCalibs$ID))){
+		if (max(gapeCalibs$Reading[gapeCalibs$ID == 
+								levels(gapeCalibs$ID)[i]]) > 515){
+			gapeCalibs$Reading[gapeCalibs$ID == 
+							levels(gapeCalibs$ID)[i]] = 1023 - 
+					gapeCalibs$Reading[gapeCalibs$ID == 
+									levels(gapeCalibs$ID)[i]]
+		}
+	}	
+	# Begin generating the asymptotic curve fit parameters for the magnetic
+# hall effect sensor data. 
+	gC2 = groupedData(Reading~Distance.mm|ID/Trial,data=gapeCalibs)
+	
+
+# Fit the asymptotic model and generate a set of coefficient values
+# This will adjust each set of a,b,c coefs based on a random effect of
+# magID and Trial. 
+	
+	# Fit separate curves to each group (trial) in the grouped data frame
+	mod3 = nlsList(Reading~a-(b*exp(-c*Distance.mm)), 
+			data = subset(gC2,subset = ID == currentID), 
+			start = c(a = 460, b = 60, c = 0.3),
+			control = list(minFactor = 1e-9, msMaxIter = 200, maxiter = 200))
+# Extract the a,b,c coefficients and put them in a data frame
+	abcvals = data.frame(a = coef(mod3)[,1], b = coef(mod3)[,2],
+			c = coef(mod3)[,3])
+	
+# The fit between 'b' and 'c' can be linearized with a log transform of 'b'
+	cRegress = lm(c~log(b), data = abcvals)  
+
+#	plot(c~`log(b)`, data = cRegress$model) # Plot the original data
+#	abline(cRegress) # fitted regression line
+	
+	# Return cRegress as the output
+	cRegress
+}  # end of cRegressEstimate function.
+################################################################################
+
+```
+
+Once the curve parameters $a,b,$ and $c$ have been established for a particular
+sensor and magnet setup, the distance of opening in millimeters (relative to the
+initial closed position) can be estimated using the equation:
+
+$Distance = \frac{log(\frac{Counts - a}{-1 \times b})}{-1 \times c}$
+
+The original curve fits, to estimate Reading values from Distance, are 
+based on the equation:
+
+$Counts = a-(b \times \exp^{(-c \times Distance)})$
+
+The accuracy of the estimated distance unavoidably degrades as the magnet and
+Hall sensor get further apart (i.e. wider shell openings), but for the 
+distances related to the initial shell opening, we can get reasonably good
+(sub-millimeter) estimates of the change in distance between the magnet and
+sensor (and thus between the 2 valves of the shell)
+
+Below is a figure showing the observed and fitted estimates of the readings
+for each Distance, from multiple starting points. We see good correspondence
+between the fitted values and observed values, indicating that the estimated
+coefficients
+
+```{r trialCurveFitting, echo=FALSE,dpi=300,fig.width=5,fig.cap='Observed readings (open circles) and fitted values (closed circles) derived from nls curve fitting routine.'}
+## Example of code to fit curves to each Trial for a given sensor, followed by
+# showing the predicted values from the curve fits afterwards. 
+
+library(nlme)
+# Begin generating the asymptotic curve fit parameters for the magnetic
+# hall effect sensor data. 
+gC2 = groupedData(Reading~Distance.mm|Trial,data=SN20Hall02, order.groups = FALSE)
+#plot(Reading~Distance.mm,data=gC2)
+
+
+# Fit separate curves to each group (trial) in the grouped data frame
+mod3 = nlsList(Reading~a-(b*exp(-c*Distance.mm)), 
+		data = gC2, start = c(a = 460, b = 30, c = 0.3),
+		control = list(minFactor = 1e-9, msMaxIter = 200))
+# Extract the a,b,c coefficients and put them in a data frame
+abcvals = data.frame(a = coef(mod3)[,1], b = coef(mod3)[,2],
+		c = coef(mod3)[,3])
+
+# The fit between 'b' and 'c' can be linearized with a log transform of 'b'
+cRegress = lm(c~log(b), data = abcvals)  
+#plot(c~log(b),data=abcvals)
+
+# Run predict function for a set of 50 fixed distances
+reps = 100
+newdist = seq(0,12.3,length = reps)
+res = predict(mod3, newdata = list(Distance.mm = newdist))
+# Create a data frame from the results, with the Distance.mm values added
+# back in and a Trial number assigned for each group of 50 distances
+predlines = data.frame(Reading = res, Distance.mm= rep(newdist,10),
+		Trial = factor(rep(1:10,each=reps)))
+# Basic plot
+plot(Reading~Distance.mm, data = predlines, type = 'n',
+		main = 'SN20Hall02')
+for (i in 1:length(levels(SN20Hall02$Trial))){
+	# Plot observed points
+	points(Reading~Distance.mm, 
+			data = SN20Hall02[SN20Hall02$Trial == levels(SN20Hall02$Trial)[i],],
+			pch = 21, col = i)
+	# Plot observed lines
+#	lines(Reading~Distance.mm,
+#			data = SN20Hall02[SN20Hall02$Trial == levels(SN20Hall02$Trial)[i],],
+#			pch = 21, col = i, lwd = 1.5)
+	# Plot fitted points based on curve fitting routine
+	points(Reading~Distance.mm, 
+			data = predlines[predlines$Trial == levels(predlines$Trial)[i],],
+			pch = 20, col = i)
+}
+legend('bottomright',legend=c('Observed','Fitted'),pch=c(21,20))
+
+```
+
+## Calibration results for each sensor
+
+For these calibration trials, we set the starting distance between the 
+magnet and Hall effect sensor to several different values, to account for 
+the range of possible starting values we might get when the magnet and sensor
+are glued to the oyster shell. The important thing here is that the shape
+of the curves is consistent, changing only in steepness depending on the
+initial starting distance.
+
+
+```{r defineGapeCalibFile, echo=showcode, cache=FALSE}
+# Give the path to the concatenated calibration file
+calibDir ='../data/Calibration/201905_all_calibrations/'
+gapeCalibFile = paste0(calibDir,'201905_calibrations.csv')
+```
+
+```{r plotCalibFunction, echo=showcode }
+
+#' A function to open calibration data and plot data for a given board and channel
+#' 
+#' @param SN A text string naming the board serial number, in the form 'SN21'
+#' @param Channel numeric value naming the Hall effect sensor channel to be 
+#' calibrated (expected values 0-15). 
+#' @param gapeCalibFile A text path to the file that holds Hall effect
+#' calibration data
+#' @param plot Logical value indicating whether a plot should be produced
+#' @param plotpoints Logical value indicating whether points should be plotted
+#' @param plotlines Logical value indicating whether lines should be plotted
+#' @param plottext Logical value indicating whether text markers indicating the
+#' Trial number should be plotted
+#' @param insetplot Logical value indicating whether an inset plot showing the
+#' relationship between the estimated curve parameters log(b) and c should be
+#' included
+#'  
+
+plotCalib <- function(SN,Channel,gapeCalibFile, plot = TRUE, plotpoints = TRUE, 
+		plotlines = TRUE, plottext = FALSE, insetplot = FALSE) {
+	# Create an identifier for the board/channel combination, i.e. 'SN21Ch01'
+	if (Channel < 10){
+		newChannel = paste0('0',as.character(Channel))
+	} else {
+		newChannel = as.character(Channel)
+	}
+	# Create the ID for the current board & channel
+	currentID = paste0(SN,'Ch',newChannel)
+	# Open the concatenated file of calibration data
+	gapeCalibs = read.csv(gapeCalibFile) 
+	gapeCalibs$Serial = factor(gapeCalibs$Serial)
+	gapeCalibs$Trial = factor(gapeCalibs$Trial)
+	# Create a unique identifier for each board/channel combination, 
+	# ensuring that the Channel number is always 2 digits 
+	gapeCalibs$ID = factor(paste0(gapeCalibs$Serial,'Ch',
+					ifelse(gapeCalibs$HallChannel<10,
+							paste0('0',gapeCalibs$HallChannel),
+							gapeCalibs$HallChannel)))
+	# Generate the curve parameters for this board & channel calibration						
+	cRegress = cRegressEstimate(SN, Channel, gapeCalibFile)	
+	# Subset out the chosen board & channel's data
+	dat = gapeCalibs[gapeCalibs$ID == currentID,]
+	dat = droplevels(dat)
+	
+	if(plot){
+		par(fig = c(0,1,0,1)) # Set up default main plot extent
+		ylims = range(dat$Reading) 
+		xlims = range(dat$Distance.mm) 
+		plot(Reading~Distance.mm,data = dat, type = 'n',
+				ylim = ylims,
+				las = 1,
+				ylab = 'Raw AD Counts',
+				xlab = 'Distance, mm',
+				main = currentID)
+		rect(par()$usr[1],par()$usr[3],par()$usr[2],par()$usr[4],col='grey70')
+		grid()
+		box()
+		
+		# Plot 
+		for (i in 1:length(levels(dat$Trial))){
+			if (plotpoints){
+				points(Reading~Distance.mm, 
+						data = dat[dat$Trial == levels(dat$Trial)[i],],
+						pch = 21, col = i)				
+			}
+			if (plotlines){
+				lines(Reading~Distance.mm,
+						data = dat[dat$Trial == levels(dat$Trial)[i],],
+						pch = 21, col = i, lwd = 1.5)
+			}
+			if (plottext){
+				text(Reading~Distance.mm, 
+						data = dat[dat$Trial == levels(dat$Trial)[i],],
+					labels = dat[dat$Trial == levels(dat$Trial)[i],'Trial'],
+						col = 'black')
+			}
+		}
+		if (insetplot) {
+			par(fig = c(0.4,0.95,0.15,0.75), new = TRUE)
+			regressR2 = summary(cRegress)$adj.r.squared
+			# Plot the original data
+			plot(c~`log(b)`, data = cRegress$model, las = 1, pch = 20)
+			rect(par()$usr[1],par()$usr[3],par()$usr[2],par()$usr[4],col='grey80')
+			points(c~`log(b)`, data = cRegress$model, las = 1, pch = 20)
+			text(c~`log(b)`, data = cRegress$model, 
+					labels = names(cRegress$fitted.values), adj = -0.2)
+			abline(cRegress) # fitted regression line
+			mylabel = bquote(italic(R)^2 == .(format(regressR2, digits = 3)))
+			legend('topleft',legend=mylabel, bty = 'n', cex = 0.8)
+		}
+	}
+}
+
+```
+		
+
+### SN21 Calibrations
+
+```{r SN21Hall00,echo=showcode, cache=FALSE,fig.cap='SN21Hall00',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN21',Channel = 0,gapeCalibFile, plottext = FALSE, 
+		insetplot = TRUE) 
+```
+
+```{r SN21Hall01,echo=showcode, cache=FALSE,fig.cap='SN21Hall01',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN21',Channel = 1,gapeCalibFile, plottext = FALSE, 
+		insetplot = TRUE)
+```
+
+```{r SN21Hall02,echo=showcode,fig.cap='SN21Hall02',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN21',Channel = 2,gapeCalibFile, plottext = FALSE,  
+		insetplot = TRUE)
+```
+
+```{r SN21Hall03,echo=showcode, cache=FALSE,fig.cap='SN21Hall03',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN21',Channel = 3,gapeCalibFile, plottext = FALSE, 
+		insetplot = TRUE)
+```
+
+```{r SN21Hall04,echo=showcode, cache=FALSE,fig.cap='SN21Hall04',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN21',Channel = 4,gapeCalibFile, plottext = FALSE, 
+		insetplot = TRUE)
+```
+
+```{r SN21Hall08,echo=showcode,fig.cap='SN21Hall08',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN21',Channel = 8,gapeCalibFile, plottext = FALSE, 
+		insetplot = TRUE)
+```
+
+```{r SN21Hall09,echo=showcode, cache=FALSE,fig.cap='SN21Hall09',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN21',Channel = 9,gapeCalibFile, plottext = FALSE, 
+		insetplot = TRUE)
+```
+
+```{r SN21Hall10,echo=showcode, cache=FALSE,fig.cap='SN21Hall10',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN21',Channel = 10,gapeCalibFile, plottext = FALSE, 
+		insetplot = TRUE)
+```
+
+```{r SN21Hall11,echo=showcode, cache=FALSE,fig.cap='SN21Hall11',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN21',Channel = 11,gapeCalibFile, plottext = FALSE,  
+		insetplot = TRUE)
+```
+
+```{r SN21Hall12,echo=showcode, cache=FALSE,fig.cap='SN21Hall12',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN21',Channel = 12,gapeCalibFile, plottext = FALSE, 
+		insetplot = TRUE)
+```
+
+
+### SN20 Calibrations
+
+
+```{r SN20Hall00,echo=showcode, cache=FALSE,fig.cap='SN20Hall00',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN20',Channel = 0,gapeCalibFile, plottext = FALSE, 
+		insetplot = TRUE)
+```
+
+```{r SN20Hall01,echo=showcode, cache=FALSE,fig.cap='SN20Hall01',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN20',Channel = 1,gapeCalibFile, plottext = FALSE,
+		insetplot = TRUE)
+```
+
+```{r SN20Hall02,echo=showcode, cache=FALSE,fig.cap='SN20Hall02',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN20',Channel = 2,gapeCalibFile, plottext = FALSE,
+		insetplot = TRUE)
+```
+
+```{r SN20Hall03,echo=showcode, cache=FALSE,fig.cap='SN20Hall03',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN20',Channel = 3,gapeCalibFile, plottext = FALSE,
+		insetplot = TRUE)
+```
+
+```{r SN20Hall04,echo=showcode, cache=FALSE,fig.cap='SN20Hall04',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN20',Channel = 4,gapeCalibFile, plottext = FALSE,
+		insetplot = TRUE)
+```
+
+
+```{r SN20Hall08,echo=showcode, cache=FALSE,fig.cap='SN20Hall08',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN20',Channel = 8,gapeCalibFile, plottext = FALSE, 
+		insetplot = TRUE)
+```
+
+```{r SN20Hall09,echo=showcode, cache=FALSE,fig.cap='SN20Hall09',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN20',Channel = 9,gapeCalibFile, plottext = FALSE, 
+		insetplot = TRUE)
+```
+
+
+```{r SN20Hall10,echo=showcode, cache=FALSE,fig.cap='SN20Hall10',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN20',Channel = 10,gapeCalibFile, plottext = FALSE,
+		insetplot = TRUE)
+```
+
+
+```{r SN20Hall11,echo=showcode, cache=FALSE,fig.cap='SN20Hall11',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN20',Channel = 11,gapeCalibFile, plottext = FALSE, 
+		insetplot = TRUE)
+```
+
+
+```{r SN20Hall12,echo=showcode, cache=FALSE,fig.cap='SN20Hall12',fig.width=5,fig.height=5,dpi=600}
+plotCalib(SN = 'SN20',Channel = 12,gapeCalibFile, plottext = FALSE, 
+		insetplot = TRUE)
+```
+
+
+
+```{r testingLoad, eval=FALSE, echo=FALSE}
+# Use this chunk to examine a single calibration file by providing the
+# directory name and file name that you want to look at. 
+# Load some data
+fdir = "../data/Calibration/20190514_calibration/"
+fname = 'Hall01_CALIB_00_SN20.csv'
+# Assemble the directory and file name
+gapeCalibFile = paste0(fdir,fname)
+# Get the Serial number from the file name, match pattern 'SNxx'
+matchVal = regexpr(pattern='SN[[:digit:]]{2}', text = fname)
+# Extract the magnet ID as text
+SN = substr(x=fname,
+		start = matchVal, 
+		stop = matchVal + (attr(matchVal,'match.length')-1))
+# Get channel number, match pattern 'Hallxx'
+matchVal = regexpr(pattern='Hall[[:digit:]]{2}', text = fname)
+Channel = as.numeric(substr(x=fname,
+		start = matchVal+4,
+		stop = matchVal + (attr(matchVal,'match.length')-1)))
+# Produce the calibration plot and c~log(b) plot
+plotCalib(SN,Channel,paste0(fdir,fname),plottext=TRUE,insetplot=TRUE)
+```
