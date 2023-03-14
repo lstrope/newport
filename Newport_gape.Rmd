@@ -5,7 +5,6 @@ date: '2022-08-03'
 editor_options: 
   chunk_output_type: console
 ---
-
 ```{r setup, include=FALSE} 
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -48,10 +47,11 @@ julyaugusttides=read.csv("../data/Newport_SSINP/tides/LAtides202207-202208.csv")
 #Functions: gapBounds, gapBounds2, hallFilter, DistFromCounts, percentileRange, calcPercentGapeNLME, calcPercentGapeNLMEsubset, CRegressEstimate
 ```{r gapeFunctions-, echo=showcode}
 
-# A set of functions originally taken from MussleTracker_data_proc4.R to 
+# A set of functions originally taken from MusselTracker_data_proc4.R to 
 # handle the gape data
 
-###############################################################################	
+################################################################################
+### gapBounds function
 # A function to determine where there are gaps of missing data, so that we can 
 # apply a filter to the good chunks of data. Most filters fail if there are NAs
 # present, and our remaining gaps in the data are big enough that they probably
@@ -247,6 +247,7 @@ hallFilter = function(hallData){
 }
 
 ################################################################################
+### DistFromCounts function
 # Define a non-linear function that allows you to plug in a Hall effect sensor
 # count value and generate an approximate distance in mm. Supply the 
 # coefficients a, b, c, based on a nls curve fit for counts as a function of
@@ -544,7 +545,7 @@ cRegressEstimate <- function(SN, Channel, gapeCalibFile){
 ```{r importFunctions, echo=showcode}
 
 ########################################
-#' Load a csv data file containing deployment metadata
+#' Load a csv data file containing deployment metadata and maintenance data
 #' 
 #' The deployment metadata file should contain entries for each oyster and 
 #' its associated hall effect sensor channel for a given period of time denoted 
@@ -570,6 +571,15 @@ loadFieldMetaData <- function(filename, timezone = 'UTC'){
 	metadata # return data frame
 }
 
+loadFieldMaintData <- function(filename,timezone = 'UTC'){
+	maintdata = read.csv(file=filename)
+	maintdata$StartMaintUTC = as.POSIXct(maintdata$StartMaintUTC,
+			format = '%m/%d/%Y %H:%M',tz = 'UTC')
+	maintdata$EndMaintUTC = as.POSIXct(maintdata$EndMaintUTC,
+			format = '%m/%d/%Y %H:%M',tz = 'UTC')
+	maintdata # return data frame
+}
+
 # This function deals with the GAPE data files that have an unnecessary comma at the end of each row of data, which messes with the read.csv import function
 
 #' Concatenate multiple daily gape files into one data frame
@@ -579,7 +589,9 @@ loadFieldMetaData <- function(filename, timezone = 'UTC'){
 #' @param verbose Turn on the progress bar if set to TRUE
 #' @return A data frame consisting of the input files concatenated and sorted chronologically. 
 
-ConcatGapeFiles <- function(filenames, myTimeZone = 'UTC',verbose=TRUE){
+# ConcatGapeFiles <- function(filenames, myTimeZone = 'UTC',verbose=TRUE){
+ConcatGapeFiles <- function(filenames, myTimeZone = 'UTC', code = '', startDate = NULL, endDate = NULL, verbose=TRUE){
+  if (exists('dat')) { rm(dat)} # clear dat from memory
 	if(verbose){
 		pb = txtProgressBar(min=0,max = length(filenames), style = 3)
 	}
@@ -614,23 +626,62 @@ ConcatGapeFiles <- function(filenames, myTimeZone = 'UTC',verbose=TRUE){
 	# Battery.V:  Supply battery voltage
 		#########################
 	# Convert the DateTime column to a POSIXct object.
-		dattemp$DateTime = as.POSIXct(dattemp$DateTime, tz=myTimeZone) 	
+		dattemp$DateTime = as.POSIXct(dattemp$DateTime, tz=myTimeZone) 
+		# Look for any dates that happened before July 2022, these must be mis-entered
+		# time values from Jan 2023 that were recorded as Jan 2022
+		if (min(dattemp$DateTime) < as.POSIXct('2022-07-01')){
+		  adjustYearRows = which(dattemp$DateTime < as.POSIXct('2022-07-01'))
+		  # Add one year's worth of seconds to the DateTime value
+		  dattemp$DateTime[adjustYearRows] = dattemp$DateTime[adjustYearRows] + (60*60*24*365)
+		}
 
 		
 		# Concatenate the data files. 
-		if (f == 1){
-			dat = dattemp
-		} else if (f > 1){
-			dat = rbind(dat,dattemp)
+		if (exists('dat')){
+		  dat = rbind(dat,dattemp)
+		} else {
+		  dat = dattemp
 		}
+		
+		# if (f == 1){
+		# 	dat = dattemp
+		# } else if (f > 1){
+		# 	dat = rbind(dat,dattemp)
+		# }
+
 	}
-	if(verbose) close(pb)
-# Reorder the concatenated data frame by the DateTime values in case the files were not fed in in chronological order
+  
+  		# Add in a column with the oyster code that was passed as an argument to ConcatGapeFile
+		dat$Code = code 
+		
+		# Reorder the concatenated data frame by the DateTime values in case the files were not fed in in chronological order
 	dat = dat[order(dat$DateTime),]
+		# Excise time points when this SN was not associated with the current Code(oyster),
+		# using a start and end time passed to the function as arguments
+	if (!is.null(endDate) & !is.na(endDate)){
+	  dat = dat[dat$DateTime>=startDate & dat$DateTime<=endDate, ]
+	} else if (is.null(endDate) | is.na(endDate)){
+	  # If no endDate was supplied, just trim data before start Date
+	  dat = dat[dat$DateTime>=startDate, ]
+	}
+		
+			
+	if(verbose) close(pb)
+  dat  # return this data frame
 }
 
 ##############################################################
 #' Excise questionable rows of data from Hall effect sensor data
+#' 
+#' New idea: take a halldata data frame, which may have a few disjointed periods
+#' of sampling data (from different serial numbers), and map those data onto
+#' a single continuous time series data frame. Then go through the low tide metadata
+#' file and identify all the rows that apply to this particular oyster (based on 
+#' its Code value, which gives site and treatment info), and then use the low tide
+#' servicing start and end times to further NA any rows in the giant time series that
+#' were during low tide service periods. At the end of that, then take the giant
+#' time series and interpolate any small gaps in data, and return the big time
+#' series as a data frame that will later get saved to a csv file. 
 #' 
 #' @param halldata A dataframe containing timestamps and hall effect data from
 #' multiple sensors.
@@ -642,15 +693,18 @@ ConcatGapeFiles <- function(filenames, myTimeZone = 'UTC',verbose=TRUE){
 #' @param maxGapFill The maximum number of missing values in the input time 
 #' series to impute via linear interpolation. Gaps longer than this will remain 
 #' as NA values. 
-#' 
+#' @param maintenance A data frame of start and end times of maintenance of 
+#' battery changes in the field. Start time=start of maintenance. End time=
+#' end of maintenance. Separated by site and treatment. 
 #' @return A data frame with columns
 #' added on for each oyster with available hall effect sensor data. Missing 
 #' periods of hall effect values will be denoted with NA values.  
 
-
-exciseHall = function(halldata, metadf, maxGapFill = 12) {
+#halldata = gapedat
+#metadf = metafile
+exciseHall = function(halldata, metadf, maintenance, maxGapFill = 12) {
 	# Get the list of unique OysterID values from excised
-	oysters = halldata$SN[1]
+	# oysters = halldata$SN[1]
 	#oysters = oysters[order(oysters)] # reorder if needed 
 	
 	# Generate output data frame based on initial deployment time and final 
@@ -658,71 +712,70 @@ exciseHall = function(halldata, metadf, maxGapFill = 12) {
 	time1 = min(metadf$StartIncludeUTC, na.rm=T)
 	time2 = max(halldata$DateTime, na.rm=T)
 	totaltimeseries = seq(time1,time2,by=60) #every 60 seconds
+	# Create vector to hold hall effect data for this oyster
+	temphall = matrix(data = NA, nrow = length(totaltimeseries), ncol = 5)
+	colnames(temphall) = c('Hall', 'Temp.C','Battery.V','SN', 'Code')
+	# Convert outputdf to a zoo object for easier time handling
+	tempoutput = zoo(temphall,order.by = totaltimeseries)
 	
-#	for (i in 1:length(oysters)){
-		# Create vector to hold hall effect data for this oyster
-		# temphall = vector(mode='logical',length = length(totaltimeseries))
-		temphall = matrix(data = NA, nrow = length(totaltimeseries), ncol = 3)
-		colnames(temphall) = c('Hall', 'Temp.C','Battery.V')
-		# temphall[] = NA # Set all entries to NA initially
-		# Convert outputdf to a zoo object for easier time handling
-		tempoutput = zoo(temphall,order.by = totaltimeseries)
-		
-		# Get the rows in metadf that refer to the current oyster
-		oysterRows = metadf[metadf$SN == oysters[1],]
-		
-		for (j in 1:nrow(oysterRows)){
-			# Get the hall effect sensor channel for this entry
-			#tempChannel = as.character(oysterRows$Channel[j])
-			# Get the start and end time stamps for this entry
-			startTime = oysterRows$StartIncludeUTC[j]
-			endTime = oysterRows$EndIncludeUTC[j]
-			# Extract the relevant set of data from halldata. If no EndTime in metadata then take all halldata after StartTime
-    	  if (is.na(endTime)==T){
-    		  	temp1 = halldata[halldata$DateTime>=startTime, 
-    				c('DateTime',"Hall", "Temp.C", "Battery.V")]
-    		} else {
-      		  temp1 = halldata[halldata$DateTime>=startTime & 
-      						halldata$DateTime<=endTime, 
-      				c('DateTime', "Hall", "Temp.C", "Battery.V")]
-  			   }
-			
-			# temp = halldata[halldata$DateTime>=startTime & 
-			# 				halldata$DateTime<=endTime, 
-			# 		c('DateTime',"Hall", "Temp.C", "Battery.V")]
-			# Convert to a zoo timeseries object
-			temp = zoo(temp1[,2:4],order.by=temp1[,1],frequency = 1)
-			
-			# Insert the temp hall data into the zoo object tempoutput
-			# The syntax is fun here: On the left side of the equals sign,
-			# you want a set of indices in tempoutput where the time value
-			# from tempoutput is found %in% the time values of temp. And on the
-			# right side of the equals sign, you want to get hall effect values
-			# from temp where the time value in temp is found %in% the time
-			# values of tempoutput (a much bigger set)
-			tempoutput[index(tempoutput) %in% index(temp), ] = 
-					temp[index(temp) %in% index(tempoutput),]
-	#	}
-		
- 		#For brief gaps in the data, use the zoo package function 
-		# na.approx() to generate linearly-interpolated values for the missing
-		# data. For 5-second interval data, a maxGapFill = 12 will fill up to
-		# a 1 minute gap max.
-		# If the dataset starts off or ends with NAs, they will not be altered
-		tempoutput = na.approx(tempoutput, maxgap = maxGapFill, na.rm=FALSE)
+	# Remove any possible duplicate timestamps, usually caused by the sensor
+	# briefly resetting itself (losing power) within the same minute
+	dupeRows = (which(diff(halldata$POSIXt) < 1) + 1)
+	if (length(dupeRows)!=0){
+	  halldata = halldata[-dupeRows, ]
+	}
 	
-	  tempoutput$SN=oysters
+	
+	# Convert the input halldata into a zoo object also
+	temp = zoo(halldata[,c('Hall', 'Temp.C','Battery.V','SN', 'Code')], 
+	           order.by = halldata[,1], frequency = 1)
+	
+	# Insert the temp data into the zoo object tempoutput
+	# The syntax is fun here: On the left side of the equals sign,
+	# you want a set of indices in tempoutput where the time value
+	# from tempoutput is found %in% the time values of temp. And on the
+	# right side of the equals sign, you want to get hall effect values
+	# from temp where the time value in temp is found %in% the time
+	# values of tempoutput (a much bigger set)
+	tempoutput[index(tempoutput) %in% index(temp), ] = 
+			temp[index(temp) %in% index(tempoutput),]
+
+	  #######################################################
+	# At this point tempoutput should be a long zoo object with timestamnps
+	# running from the date of the first deployment to the last available date
+	# of this particular oyster, with NA's in rows where hall/temperature data
+	# weren't available
+		#######################################################
+	# TODO: Go to the low tide servicing metadata file and get the relevant
+	# start and end times for low tide service periods for the site/treatment
+	# that this oyster is at (contained in the Code column)
+	
+	sitecode = substr(halldata$Code[1],1,1)
+	treatmentcode=substr(halldata$Code[1],3,3)
+	# Go to low tide service metafile and find all rows that match
+	# this sitecode (and treatment code) and get the list of those row numbers
+	# Then cycle through those row numbers, in each case grabbing the start time
+	# and end time of the low tide servicing. Then go to tempoutput and find
+	# any rows that are > start time and < end time, and convert NAs. 
+	services = which( (maintenance$sitecode == sitecode) & (maintenance$treatmentcode == treatmentcode) )
+	for (k in (services) ){
+	  # Find the matching time stamps and write NAs in between them
+	  startTime = maintenance$StartMaintUTC[k]
+	  endTime = maintenance$EndMaintUTC[k]
+	  # THis may not work with tempoutput in the zoo format, but the point is to 
+	  # NA those lines that are within the startTime and endTime boundaries
+	  tempoutput[which((index(tempoutput) > startTime) & (index(tempoutput) < endTime)),] = NA
+	}
+	
+	
 		# Convert tempoutput back to a data frame and stick it onto an output
 		# dataframe
-	#	if (i == 1){
-			outputdf = data.frame(DateTime = index(tempoutput), tempoutput)
-			names(outputdf)[2] = "Hall"
-		#} else if (i > 1) {
-		#	tempoutput = as.data.frame(tempoutput)
-		#	outputdf = cbind(outputdf,tempoutput)
-		#	names(outputdf)[ncol(outputdf)] = as.character(oysters[i])
-	#	}
-	}
+	outputdf = data.frame(DateTime = index(tempoutput), tempoutput)
+  outputdf$Hall = as.numeric(outputdf$Hall)
+  outputdf$Temp.C = as.numeric(outputdf$Temp.C)
+  outputdf$Battery.V = as.numeric(outputdf$Battery.V)
+
+
 	outputdf  # return outputdf	
 	
 } # End of exciseHall function
@@ -732,46 +785,84 @@ exciseHall = function(halldata, metadf, maxGapFill = 12) {
 ```{r}
 #import csv metadata_with edits. 
 metafile = loadFieldMetaData(filename = (paste0(metafilePath,"field_metadata_forcoding - Sheet1.csv")))
+
+#import csv maintenance
+maintenance=loadFieldMaintData(filename = (paste0(metafilePath,"lowtide_metadata - Sheet1.csv")))
 ```
 
 #list individal gape files and combine into one csv per SN, cut out specific times from meta data that shouldn't be used
 ```{r get-list-of-files-and-make-big-csv, echo=FALSE}
 #use unique() on first column. Save result as "serialnumber"
 serialnumber=unique(metafile[,1])
+oystercode = unique(metafile[,'Code'])
 
 # go through each serial number in the vector 'serialnumber' and find all files, 
 # combine them together, and spit out combogapefile at end
 ######################################## 
 
-for(i in (serialnumber)){
-  gapepath=file.path(paste0(NewportDir,"alldata/",i))
-    if(!file.exists(gapepath)) {
-     next
+# for(i in (serialnumber)){
+for (oy in (oystercode) ){ 
+  if(exists('combineddat')) { rm(combineddat)}
+  # Handle the cases where an oyster (ID'd by 4-digit value at end of oystercode) moves
+  # between positions within the same treatement, by simply looking for the matching
+  # 4-digit oyster code and ignoring the site/treatment/position codes
+  serialnumber = metafile[which(substr(metafile$Code,7,10) == substr(oy,7,10)),'SN']
+  loops = 1
+  
+  for (i in (serialnumber)){
+    # In metadata file, figure out the start and end dates for this serial number
+    # when it was associated with this oyster code
+    startDate = metafile[which(metafile$SN == i & 
+                                 substr(metafile$Code,7,10) == substr(oy,7,10)),'StartIncludeUTC']
+    endDate = metafile[which(metafile$SN == i & 
+                               substr(metafile$Code,7,10) == substr(oy,7,10)),'EndIncludeUTC']
+    
+    gapepath=file.path(paste0(NewportDir,"alldata/",i))
+      if(!file.exists(gapepath)) {
+       next
+      }
+    #dir(path=gapepath, full.names = TRUE, pattern=paste0(i,"_GAPE.csv"))
+    #generate list of file names
+    gapecombo=dir(path=gapepath, full.names = TRUE, pattern=paste0(i,"_GAPE.csv"))
+      if(length(gapecombo)==0){
+        next # if there are no data files found, skip to next serial number
+      }
+    #Use concatgapefiles to combine
+    # gapedat = ConcatGapeFiles(gapecombo, myTimeZone = 'UTC', verbose = FALSE)
+    gapedat = ConcatGapeFiles(gapecombo, myTimeZone = 'UTC', code = oy, 
+                              startDate = startDate, endDate = endDate,
+                              verbose = FALSE)
+    
+    if (loops == 1){
+      combineddat = gapedat
+      loops = loops + 1
+    } else if (loops > 1) {
+      combineddat = rbind(combineddat,gapedat)
     }
-  #dir(path=gapepath, full.names = TRUE, pattern=paste0(i,"_GAPE.csv"))
-  #generate list of file names
-  gapecombo=dir(path=gapepath, full.names = TRUE, pattern=paste0(i,"_GAPE.csv"))
-    if(length(gapecombo)==0){
-      next # if there are no data files found, skip to next serial number
-    }
-  #Use concatgapefiles to combine
-  gapedat = ConcatGapeFiles(gapecombo, myTimeZone = 'UTC', verbose = FALSE)
-# Call exciseHall function to generate a master data frame of raw hall effect readings from the oysters that were present in the field.
-  gapedat = exciseHall(halldata = gapedat, metadf = metafile)
-  write.csv(gapedat, paste0(combogapefile, i, "_combogape.csv"), row.names = FALSE)
+  } #end of serial number looping
 
-}
+  if (exists('combineddat')){
+    if (nrow(combineddat) > 0){
+      gapedat = combineddat # copy back over to this data frame for further use
+      gapedat = gapedat[order(gapedat$DateTime),]
+      # Call exciseHall function to generate a master data frame of raw hall effect readings from the oysters that were present in the field.
+      gapedat = exciseHall(halldata = gapedat, metadf = metafile, maintenance = maintenance)
+      write.csv(gapedat, paste0(combogapefile, oy, "_combogape.csv"), row.names = FALSE)
+    }
+  }
+
+} # end of oystercode for loop 
+
 ```
 
 #write over combogape files to add in percent gape and percentiles for binary graphing
 ```{r calcPercentageGape,echo=showcode, eval = evalAll}
-#get data from channel 1 of SN20 to calibrate sensor. Generate set of regression coefficients and put them in cRegress. Use cRegress to do % calculation.
+#get data from calibration. Generate set of regression coefficients and put them in cRegress. Use cRegress to do % calculation.
 chNum=1
 cRegress = cRegressEstimate("SN20", chNum,gapecalibfile)
 
-for(i in (serialnumber)){
-  #j=paste0(i,"_GAPE.csv")
-  gapepath=file.path(paste0(combogapefile, i, "_combogape.csv"))
+for(oy in (oystercode)){
+  gapepath=file.path(paste0(combogapefile, oy, "_combogape.csv"))
     if(!file.exists(gapepath)) {
      next
     }
@@ -1586,7 +1677,7 @@ SN104=SN104 %>% mutate(binary =
 # easier to handle
 #LPLgape.perc.dec = LPLgape.perc[seq(1,nrow(LPLgape.perc), by = 12),]
 #write.csv(LPLgape.perc.dec,
-#		file = paste0(gapeDir,LPL1minGapeFile),
+#		file = paste0(gapeDir,LPL1minGapeFile)
 #		row.names=FALSE)
 ```
 
