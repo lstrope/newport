@@ -61,7 +61,7 @@ plots=paste0(localpath,'Newport_SSINP/plots/')
 ```
 
 #Functions: gapBounds, gapBounds2, hallFilter, DistFromCounts, percentileRange, calcPercentGapeNLME, calcPercentGapeNLMEsubset, CRegressEstimate
-```{r gapeFunctions-, echo=showcode}
+```{r gapBoundsFunctions-, echo=showcode}
 
 # A set of functions originally taken from MusselTracker_data_proc4.R to 
 # handle the gape data
@@ -215,10 +215,9 @@ gapBounds2=function(mygaps, maxrow){
   mygaps2 # return this data frame at the end of the function
   
 }
+```
 
-
-
-
+```{r hallFilter function}
 ################################################################################
 ### hallFilter function
 #' A function to apply a Butterworth 1st order low-pass filter to a vector
@@ -261,7 +260,9 @@ hallFilter = function(hallData){
 	hallData = round(hallData)
 	hallData	# return vector of filtered data
 }
+```
 
+```{r DistFromCounts function}
 ################################################################################
 ### DistFromCounts function
 # Define a non-linear function that allows you to plug in a Hall effect sensor
@@ -292,8 +293,9 @@ DistFromCounts <- function(Counts, a,b,c){
 	dist = (log((Counts - a)/(-1*b))) / (-1*c)
 	dist
 }
+```
 
-
+```{r percentileRange function}
 ################################################################################
 ### percentileRange function
 # Define a function to calculate the average reading for the upper and lower
@@ -335,7 +337,9 @@ percentileRange <- function (Hallvec, percentileLim = c(0.01,0.99)){
 	result = c(closedVal, openVal)
 	result # return the two values, always smallest then largest
 }
+```
 
+```{r calcPercentGapeNLME function}
 ################################################################################
 ### calcPercentGapeNLME function
 # Use this function to calculate the percentage gape (0-100%)
@@ -371,7 +375,7 @@ calcPercentGapeNLME <- function (hallData, cRegress, percentileLim = 0.01){
 		# The count values are now constrained within a range that should encompass fully closed (0mm) to fully open (~5mm gape). Now calculate the approximate gape opening based on the count values and a curve fit. 
 		
 		# Define the three asymptotic curve parameters a,b,c using the data for the current chunk of data.
-		aVal = max(hallData[st:end],na.rm=TRUE)+1 # add 1 count to avoid Inf output
+		aVal = max(hallData[st:end],na.rm=TRUE)+1 # add 1 count to avoid Inf output.
 		bVal = max(hallData[st:end],na.rm=TRUE) - 
 				min(hallData[st:end],na.rm=TRUE)
 		# Calculating c requires the linear model object supplied as cRegress, which will use the log-transformed 'b' value to estimate the 'c' parameter
@@ -397,9 +401,9 @@ calcPercentGapeNLME <- function (hallData, cRegress, percentileLim = 0.01){
 	outputData	# return the output data vector
 }	# end of calcPercentGapeNLME function
 
+```
 
-
-
+```{r calcPercentGapeNLMEsubset function}
 ################################################################################
 ### calcPercentGapeNLMEsubset function
 # Use this function to calculate the percentage gape (0-100%) of only a subset of data (days) at a time to account for growth of oyster shell. 
@@ -426,8 +430,10 @@ calcPercentGapeNLME <- function (hallData, cRegress, percentileLim = 0.01){
 
 calcPercentGapeNLMEsubset <- function (hallData, cRegress, percentileLim = c(0.01,0.99), maxrow, minrows = 1440, myPercentThreshold = 1.0){
 	require(nlme)
+  if (exists('aValOld')) {rm(aValOld)}
+  if (exists('oldthresholdvalue')) {rm(oldthresholdvalue)}
 	# Get the row indices for the major gaps that exist now
-	mygaps = gapBounds(hallData) #figure out if length of mygaps exceeds max length value (6 days). If so then split it up 
+	mygaps = gapBounds(hallData) #identify start and end of non-NA chunks of data.
 	
 	# Check if any of the Start/End values in mygaps are less than minrows apart. If they are, remove
 	# that entry from mygaps
@@ -452,30 +458,37 @@ calcPercentGapeNLMEsubset <- function (hallData, cRegress, percentileLim = c(0.0
   		
   		# Now truncate count values that are outside myrange to the limits of myrange.
   		rowIndices = which(hallData[st:end] < myrange[1])
-  		hallData[(st+rowIndices)] = myrange[1]
+  		hallData[((st-1)+rowIndices)] = myrange[1]
   		rowIndices = which(hallData[st:end] > myrange[2])
-  		hallData[(st+rowIndices)] = myrange[2]
+  		hallData[((st-1)+rowIndices)] = myrange[2]
   		
-  		# The count values are now constrained within a range that should encompass fully closed (0mm) to fully open (~5mm gape). Now calculate the approximate gape opening based on the count values and a curve fit. 
+  		# The count values are now constrained within a range that should encompass fully closed 
+  		# (0mm) to fully open (~5mm gape). Now calculate the approximate gape opening based on the count values and a curve fit. 
   		# Define the three asymptotic curve parameters a,b,c using the data for the current chunk of data.
-  		#Compare to previous chunk's aVal, if current chunk is less then use previous chunk's aVal
+  		# Compare to previous chunk's aVal, if current chunk is less then use previous chunk's aVal
   		if(exists('aValOld')){
   		  aVal = max(hallData[st:end],na.rm=TRUE)+1 # add 1 count to avoid Inf output
   		  if (aValOld > aVal){
-  		    aVal = aValOld
+  		    aVal = aValOld  # if the current aVal is lower than the previous aValOld, keep using the aValOld
+  		  } else if (aValOld <= aVal){
+  		    aValOld = aVal # Update aValOld to use this new larger aVal from the current chunk of data
   		  }
   		} else {
+  		  # If aValOld doesn't exist yet, find the aVal value and also set aValOld to equal aVal'
+  		  # aVal=value at maximum opening
   		  aVal = max(hallData[st:end],na.rm=TRUE)+1 # add 1 count to avoid Inf output
   		  aValOld = aVal  # store the max value for the next time through this loop
   		}
-  		# Calculate bVal as the difference between the highest value (aVal) and the lowest (closed)
+  		# bVal=the difference between the highest value (aVal) and the lowest (closed)
   		# value in this chunk
   		bVal = aVal - 
   				min(hallData[st:end],na.rm=TRUE)
-  		# Calculating c requires the linear model object supplied as cRegress, which will use the log-transformed 'b' value to estimate the 'c' parameter
+  		# Calculating c requires the linear model object supplied as cRegress, 
+  		# which will use the log-transformed 'b' value to estimate the 'c' parameter
   		cVal = predict(cRegress, newdata = list(b = bVal))
   		
-  		# Use DistFromCounts function to estimate valve gape distance using the input hall effect count data at each time point and the parameters a,b,c
+  		# Use DistFromCounts function to estimate valve gape distance using the input hall
+  		# effect count data at each time point and the parameters a,b,c
   		temp2 = DistFromCounts( hallData[st:end], 
   				a = aVal,
   				b = bVal,
@@ -490,9 +503,21 @@ calcPercentGapeNLMEsubset <- function (hallData, cRegress, percentileLim = c(0.0
   		
   		orderedtemp2 = temp2[order(temp2)] # order all the distance values from small to large
   		
-  		ninetiethindex =  floor(length(temp2) * myPercentThreshold) # find row index of the percentile
-  		ninetiethvalue  = orderedtemp2[ninetiethindex] # grab the value that is the percentile limit
-  		temp3 = (temp2 / ninetiethvalue ) * 100 # divide all values by the percentile limit value
+  		thresholdindex =  floor(length(temp2) * myPercentThreshold) # find row index of the percentile
+  		thresholdvalue  = orderedtemp2[thresholdindex] # grab the value that is the percentile limit
+  		
+  		if (!exists('oldthresholdvalue')) {
+  		  oldthresholdvalue = thresholdvalue
+  		} else if (exists('oldthresholdvalue')) {
+  		  if (oldthresholdvalue > thresholdvalue) {
+  		    # The previous chunk's X-percentile value was larger than this chunk's, so use the old x-percentile value
+  		    thresholdvalue = oldthresholdvalue
+  		  } else if (thresholdvalue >= oldthresholdvalue){
+  		    # If this new chunk's x-percentile value is larger than the previous chunk's, update old x-percentile value
+  		    oldthresholdvalue = thresholdvalue
+  		  }
+  		}
+  		temp3 = (temp2 / thresholdvalue ) * 100 # divide all values by the percentile threshold value
   		temp3[which(temp3 > 100)] = 100 # filter any percentages > 100 to just be 100
   		outputData[st:end] = temp3
   		
@@ -508,7 +533,9 @@ calcPercentGapeNLMEsubset <- function (hallData, cRegress, percentileLim = c(0.0
 	
 	outputData	# return the output data vector
 }	# end of calcPercentGapeNLME function
+```
 
+```{r cRegress function}
 #cRegressEstimate helps calibrate sensors using CalibFileName.csv file 
 ################################################################################
 ################################################################################
@@ -882,22 +909,23 @@ plot2HallFunction = function(gape){
 			xlab = 'Date',
 			las = 1,
 			main = gape$SN[1])
-	    abline(v = gape$DateTime[1440*15])
-	    abline(v = gape$DateTime[1440*10])
-	    abline(v = gape$DateTime[1440*5])
-	    abline(v = gape$DateTime[1440*20])
-	    abline(v = gape$DateTime[1440*25])
+	    startRow = min(which(!is.na(gape$Hall)))
+	    abline(v = gape$DateTime[startRow + (1440*5)])
+	     abline(v = gape$DateTime[startRow + (1440*15)])
+	     abline(v = gape$DateTime[startRow + (1440*10)])
+	    abline(v = gape$DateTime[startRow + (1440*20)])
+	    abline(v = gape$DateTime[startRow + (1440*25)])
 	if(!all(is.na(gape[,'hallpercent']))){
   	plot(gape$DateTime, gape$hallpercent, type = 'l', col = 2,
   			ylab = 'Gape opening %',
   			xlab = 'Date',
   			las = 1,
   			main = gape$SN[1])
-	  	abline(v = gape$DateTime[1440*15])
-	    abline(v = gape$DateTime[1440*10])
-	    abline(v = gape$DateTime[1440*5])
-	    abline(v = gape$DateTime[1440*20])
-	    abline(v = gape$DateTime[1440*25])
+	    abline(v = gape$DateTime[startRow + (1440*5)])
+	     abline(v = gape$DateTime[startRow + (1440*15)])
+	     abline(v = gape$DateTime[startRow + (1440*10)])
+	    abline(v = gape$DateTime[startRow + (1440*20)])
+	    abline(v = gape$DateTime[startRow + (1440*25)])
   	}
 	par(mfrow=c(1,1))
 }
@@ -1023,7 +1051,8 @@ oystercode = unique(metafile[,'Code'])
 chNum=1
 cRegress = cRegressEstimate("SN20", chNum,gapecalibfile)
 
-for(oy in (oystercode)){
+#for(oy in (oystercode)){
+oy="W.O.5.1016"
   gapepath=file.path(paste0(combogapefile, oy, "_combogape.csv"))
     if(!file.exists(gapepath)) {
      next
@@ -1053,7 +1082,7 @@ for(oy in (oystercode)){
 	gapedat[which(gapedat$hallpercent>5), "binary"]=1
 	#save as one csv per SN
 	write.csv(gapedat, paste0(combogapefile, oy, "_combogape.csv"))
-}
+#}
 ```
 
 #combine combogape files (w/hallpercent, percentile, binary columns) into one giant dataset. Combine with metadata
@@ -1399,13 +1428,13 @@ oy="W.O.5.1016"
   if(!file.exists(filecheck)) {
    next
   }
-  png(file=paste0(plots,"hallpercenttest/W.O.5.1016/",oy,"_reusemaxhall_test.png"), width=800, height=600)
+  #png(file=paste0(plots,"hallpercenttest/W.O.5.1016/",oy,"_reusemaxhall_test.png"), width=800, height=600)
   testdata=loadComboGape(oy)
     if(all(is.na(testdata[,'Hall']))){
     next
   }
   plot2HallFunction(testdata)
-  dev.off()
+  #dev.off()
   remove(testdata)
 # }
 
