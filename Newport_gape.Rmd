@@ -5,6 +5,20 @@ date: '2022-08-03'
 editor_options: 
   chunk_output_type: console
 ---
+
+### To do:
+
+## Get raw hall value (not ninetieth distance mm value) because when calculate distances looks at asymptotic value from raw hall. Truncate raw hall values on percentilelim function. from previous chunk and use as 
+#Get max of percentilRange and use as raw hall value. Then plug in as argument in 
+# Do this with aVal and bVal
+
+#plot a line every 5 days to see where it is chunking out the data 
+
+##Look at raw gape data vs % gape data. To make sure there aren't huge values throwing off the max open %. 
+
+##Callibration stuff???
+
+### calculate individual % open/closed. Then take average of all oysters in each treatment/site/by month but average has to be weighted bc some oysters only collect for 1 day vs others for 3 months. Then somehow do variance with weighted averages. 
 ```{r setup, include=FALSE} 
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -13,7 +27,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r loadLibraries, echo=FALSE, message=FALSE}
 library(tidyverse)
 library(scales)
-library(readr)
+library(readr) 
 library(dplyr)
 library(Tides)
 library(janitor)
@@ -42,6 +56,8 @@ metafilePath = paste0(localpath,'Newport_SSINP/metadata/')
 #tides
 julyaugusttides=read.csv("../data/Newport_SSINP/tides/LAtides202207-202208.csv")
 
+#plots
+plots=paste0(localpath,'Newport_SSINP/plots/')
 ```
 
 #Functions: gapBounds, gapBounds2, hallFilter, DistFromCounts, percentileRange, calcPercentGapeNLME, calcPercentGapeNLMEsubset, CRegressEstimate
@@ -89,7 +105,7 @@ gapBounds <- function (values){
 	# and gaps with value == FALSE are the starts of runs of NAs. This will
 	# get the number of FALSE (negated to TRUE) values in gaps. A dataset
 	# ending in good data will have a last entry in gaps of FALSE. 
-	numgaps = sum(!gaps$values)
+	numgaps = sum(!gaps$values) 
 	
 	# Create the output data frame
 	results = data.frame(Start = integer(numgaps), End = integer(numgaps))
@@ -142,7 +158,7 @@ gapBounds <- function (values){
 ################################################################################
 ### gapBounds2 function
 #' Function that sets bounds for upper and lower limit of hall counts to calculate gape opening % while dealing with growth rates. Change chunk length to certain number of days (hall count rows) (arbitrary 5 days). Use gapbounds function to set new ranges. 
-#' @param mygaps A datafrom from gapbounds function
+#' @param mygaps A data frame from gapbounds function
 #' @param maxrow Max length of rows (time) to subset out 
 
 gapBounds2=function(mygaps, maxrow){
@@ -219,7 +235,7 @@ gapBounds2=function(mygaps, maxrow){
 hallFilter = function(hallData){	
 	# Define a butterworth low-pass filter, 1st order, to filter at 1/10 the 
 	# sampling rate (which was 5 secs (0.2Hz))
-	#myfilter = signal:::butter(1,0.1,type='low', plane = 'z')
+	# myfilter = signal:::butter(1,0.1,type='low', plane = 'z')
 	# Find the start and end of any gaps in the data set using the gapBounds
 	# function defined earlier
 	mygaps = gapBounds(hallData)
@@ -392,61 +408,104 @@ calcPercentGapeNLME <- function (hallData, cRegress, percentileLim = 0.01){
 #' @param hallData A vector of analog-to-digital converter counts from a  Hall effect sensor. The values are assumed to start low (<512) when the magnetic signal is strong (close to sensor) and increase towards 512 when the magnetic signal is weak (far from sensor).
 #' @param cRegress A linear model object (lm) for the relationship of 'c' versus the log-transform of 'b'. 
 #' @param percentileLim A numeric value between 0 and 1, usually close to 0.01, used to define the lower and upper percentile limits (the upper limit is mirrored from the lower limit). A value of 0.01 would cause the 1st and 99th percentile sensor values to be used as the lower and upper limits.
+#' @param myPercentThreshold A value from 0 to 1 used during the final conversion from distance to 
+#' percentage gape to filter all very wide values to just be 100%. You can put a value such as 0.9
+#' and this will take any estimated distance value greater than the 90th percentile for the current
+#' chunk of hall data and convert all of those large values to 100%. All of the smaller distance values
+#' will also be scaled relative to this 90th percentile distance, meaning that smaller distances will 
+#' appear as greater percentage opening values than they would if myPercentThreshold were set to the 
+#' default 1.0. 
 #' @return A vector of the same length as hallData containing percentage values 0 to 100, representing the shell valve gape opening. A value of 0 is a fully closed shell (strong magnetic signal) and 100 is a fully open shell (weak magnetic signal).
 #' @param maxrow A number of rows used to define the upper and lower limits of hall sensor calculations. Chose arbitrary 7 day chunk. may want to be 5 days bc if have little bit of leftover chunk then can  add on to previous so then last chunk is 7 days. 
+#' @param minrows The minimum number of rows of contiguous hall data that we will allow to be converted
+#' to a percentage gape. Because very short chunks of hall data will probably not encompass the full 
+#' range of opening and closing, we wouldn't want to try to calculate 0-100% open values. minrows will be
+#' specified as a number of rows, so the conversion to length of time depends on how frequently the 
+#' hall data were being sampled. Lauren's BivalveBit sensors were collecting once a minute. 1440 minutes
+#' in a day
 
-calcPercentGapeNLMEsubset <- function (hallData, cRegress, percentileLim = 0.01, maxrow){
+calcPercentGapeNLMEsubset <- function (hallData, cRegress, percentileLim = c(0.01,0.99), maxrow, minrows = 1440, myPercentThreshold = 1.0){
 	require(nlme)
 	# Get the row indices for the major gaps that exist now
-	mygaps = gapBounds(hallData) #figure out if length of mygaps exceeds max length value (7 days). If so then split it up 
+	mygaps = gapBounds(hallData) #figure out if length of mygaps exceeds max length value (6 days). If so then split it up 
 	
-	# Use gapBounds2 to subdivide the continuous data into chunks of time that are defined by maxrow
-	mygaps = gapBounds2(mygaps, maxrow)
+	# Check if any of the Start/End values in mygaps are less than minrows apart. If they are, remove
+	# that entry from mygaps
+	mydiffs = mygaps$End - mygaps$Start
+	mygaps = mygaps[which(mydiffs > minrows),]
 	
-	# Create an empty output vector of the same length as the input data. 
-	outputData = vector(mode = 'numeric', length = length(hallData))
-	outputData[] = NA # Convert all the values to NA to begin with
+	if (nrow(mygaps > 0)){
+	  # Use gapBounds2 to subdivide the continuous data into chunks of time that are defined by maxrow
+  	mygaps = gapBounds2(mygaps, maxrow)
+  	
+  	# Create an empty output vector of the same length as the input data. 
+  	outputData = vector(mode = 'numeric', length = length(hallData))
+  	outputData[] = NA # Convert all the values to NA to begin with
+  	
+  	# Now for each section of the input data, calculate the percent gape. This involves using the entries in mygaps to subset the input data and calculate individual percentile values for each contiguous section of data. If there is a significant gap in the data (usually > 30 sec), the percentages will be re-calculated for each contiguous section of data. This should accommodate any sensor/magnet re-glueing issues. 
+  	for (i in 1:nrow(mygaps)){
+  		st = mygaps$Start[i]
+  		end = mygaps$End[i]
+  		# First calculate the upper and lower 1% values of the Hall readings. These will be count values representing the fully closed (lowest) and fully open (highest, closest to 512) values.
+  		myrange = percentileRange(hallData[st:end], 
+  				percentileLim = percentileLim)
+  		
+  		# Now truncate count values that are outside myrange to the limits of myrange.
+  		rowIndices = which(hallData[st:end] < myrange[1])
+  		hallData[(st+rowIndices)] = myrange[1]
+  		rowIndices = which(hallData[st:end] > myrange[2])
+  		hallData[(st+rowIndices)] = myrange[2]
+  		
+  		# The count values are now constrained within a range that should encompass fully closed (0mm) to fully open (~5mm gape). Now calculate the approximate gape opening based on the count values and a curve fit. 
+  		# Define the three asymptotic curve parameters a,b,c using the data for the current chunk of data.
+  		#Compare to previous chunk's aVal, if current chunk is less then use previous chunk's aVal
+  		if(exists('aValOld')){
+  		  aVal = max(hallData[st:end],na.rm=TRUE)+1 # add 1 count to avoid Inf output
+  		  if (aValOld > aVal){
+  		    aVal = aValOld
+  		  }
+  		} else {
+  		  aVal = max(hallData[st:end],na.rm=TRUE)+1 # add 1 count to avoid Inf output
+  		  aValOld = aVal  # store the max value for the next time through this loop
+  		}
+  		# Calculate bVal as the difference between the highest value (aVal) and the lowest (closed)
+  		# value in this chunk
+  		bVal = aVal - 
+  				min(hallData[st:end],na.rm=TRUE)
+  		# Calculating c requires the linear model object supplied as cRegress, which will use the log-transformed 'b' value to estimate the 'c' parameter
+  		cVal = predict(cRegress, newdata = list(b = bVal))
+  		
+  		# Use DistFromCounts function to estimate valve gape distance using the input hall effect count data at each time point and the parameters a,b,c
+  		temp2 = DistFromCounts( hallData[st:end], 
+  				a = aVal,
+  				b = bVal,
+  				c = cVal)
+  		
+  		# Replace any fully-open Inf values with the largest good max distance
+  		temp2[is.infinite(temp2)] = max(temp2[is.finite(temp2)])
+  		# Replace any negative distance values with the 0 distance value
+  		temp2[which(temp2 < 0)] = 0
+  		# Convert to percentage by dividing all distances by the maximum value
+  		# outputData[st:end] = (temp2 / max(temp2,na.rm=TRUE)) * 100  # original version 0-100%
+  		
+  		orderedtemp2 = temp2[order(temp2)] # order all the distance values from small to large
+  		
+  		ninetiethindex =  floor(length(temp2) * myPercentThreshold) # find row index of the percentile
+  		ninetiethvalue  = orderedtemp2[ninetiethindex] # grab the value that is the percentile limit
+  		temp3 = (temp2 / ninetiethvalue ) * 100 # divide all values by the percentile limit value
+  		temp3[which(temp3 > 100)] = 100 # filter any percentages > 100 to just be 100
+  		outputData[st:end] = temp3
+  		
+  		
+  		# Round the values off to a reasonable precision
+  		outputData[st:end] = round(outputData[st:end],1)
+  	
+	  }
+	}	else if (nrow(mygaps) == 0){
+	  # None of the chunks was long enough to use, so we have no percentage data to return
+	  outputData = vector(mode = 'numeric', length = 0L)
+	}
 	
-	# Now for each section of the input data, calculate the percent gape. This involves using the entries in mygaps to subset the input data and calculate individual percentile values for each contiguous section of data. If there is a significant gap in the data (usually > 30 sec), the percentages will be re-calculated for each contiguous section of data. This should accommodate any sensor/magnet re-glueing issues. 
-	for (i in 1:nrow(mygaps)){
-		st = mygaps$Start[i]
-		end = mygaps$End[i]
-		# First calculate the upper and lower 1% values of the Hall readings. These will be count values representing the fully closed (lowest) and fully open (highest, closest to 512) values.
-		myrange = percentileRange(hallData[st:end], 
-				percentileLim = percentileLim)
-		
-		# Now truncate count values that are outside myrange to the limits of myrange.
-		rowIndices = which(hallData[st:end] < myrange[1])
-		hallData[(st+rowIndices)] = myrange[1]
-		rowIndices = which(hallData[st:end] > myrange[2])
-		hallData[(st+rowIndices)] = myrange[2]
-		
-		# The count values are now constrained within a range that should encompass fully closed (0mm) to fully open (~5mm gape). Now calculate the approximate gape opening based on the count values and a curve fit. 
-		
-		# Define the three asymptotic curve parameters a,b,c using the data for the current chunk of data.
-		aVal = max(hallData[st:end],na.rm=TRUE)+1 # add 1 count to avoid Inf output
-		bVal = max(hallData[st:end],na.rm=TRUE) - 
-				min(hallData[st:end],na.rm=TRUE)
-		# Calculating c requires the linear model object supplied as cRegress, which will use the log-transformed 'b' value to estimate the 'c' parameter
-		cVal = predict(cRegress, newdata = list(b = bVal))
-		
-		# Use DistFromCounts function to estimate valve gape distance using the input hall effect count data at each time point and the parameters a,b,c
-		temp2 = DistFromCounts( hallData[st:end], 
-				a = aVal,
-				b = bVal,
-				c = cVal)
-		
-		# Replace any fully-open Inf values with the largest good max distance
-		temp2[is.infinite(temp2)] = max(temp2[is.finite(temp2)])
-		# Replace any negative distance values with the 0 distance value
-		temp2[which(temp2 < 0)] = 0
-		# Convert to percentage by dividing all distances by the maximum value
-		outputData[st:end] = (temp2 / max(temp2,na.rm=TRUE)) * 100
-		
-		# Round the values off to a reasonable precision
-		outputData[st:end] = round(outputData[st:end],1)
-		
-	}	
 	outputData	# return the output data vector
 }	# end of calcPercentGapeNLME function
 
@@ -569,6 +628,8 @@ loadFieldMetaData <- function(filename, timezone = 'UTC'){
 	metadata$StartIncludeUTC = as.POSIXct(metadata$StartIncludeUTC,
 			format = '%m/%d/%Y %H:%M',tz = 'UTC')
 	metadata$EndIncludeUTC = as.POSIXct(metadata$EndIncludeUTC,
+			format = '%m/%d/%Y %H:%M',tz = 'UTC')
+		metadata$timeofdeath = as.POSIXct(metadata$timeofdeath,
 			format = '%m/%d/%Y %H:%M',tz = 'UTC')
 	metadata # return data frame
 }
@@ -698,13 +759,15 @@ ConcatGapeFiles <- function(filenames, myTimeZone = 'UTC', code = '', startDate 
 #' @param maintenance A data frame of start and end times of maintenance of 
 #' battery changes in the field. Start time=start of maintenance. End time=
 #' end of maintenance. Separated by site and treatment. 
+#' @param timeofdeath A timestamp of approximate death of oyster in field. Column
+#' within metadf. 
 #' @return A data frame with columns
 #' added on for each oyster with available hall effect sensor data. Missing 
 #' periods of hall effect values will be denoted with NA values.  
 
 #halldata = gapedat
 #metadf = metafile
-exciseHall = function(halldata, metadf, maintenance, maxGapFill = 12) {
+exciseHall = function(halldata, metadf, maintenance, timeofdeath, maxGapFill = 12) {
 	# Get the list of unique OysterID values from excised
 	# oysters = halldata$SN[1]
 	#oysters = oysters[order(oysters)] # reorder if needed 
@@ -748,7 +811,7 @@ exciseHall = function(halldata, metadf, maintenance, maxGapFill = 12) {
 	# of this particular oyster, with NA's in rows where hall/temperature data
 	# weren't available
 		#######################################################
-	# TODO: Go to the low tide servicing metadata file and get the relevant
+	# Go to the low tide servicing metadata file and get the relevant
 	# start and end times for low tide service periods for the site/treatment
 	# that this oyster is at (contained in the Code column)
 	
@@ -773,6 +836,15 @@ exciseHall = function(halldata, metadf, maintenance, maxGapFill = 12) {
 		# Convert tempoutput back to a data frame and stick it onto an output
 		# dataframe
 	outputdf = data.frame(DateTime = index(tempoutput), tempoutput)
+	
+	  # Remove hall data for after an oyster has died
+
+	if (!is.null(timeofdeath)){
+	  if(!is.na(timeofdeath)){
+	    outputdf = outputdf[outputdf$DateTime<timeofdeath, ]
+	  }
+	}
+
   outputdf$Hall = as.numeric(outputdf$Hall)
   outputdf$Temp.C = as.numeric(outputdf$Temp.C)
   outputdf$Battery.V = as.numeric(outputdf$Battery.V)
@@ -783,6 +855,66 @@ exciseHall = function(halldata, metadf, maintenance, maxGapFill = 12) {
 } # End of exciseHall function
 ```
 
+#Functions: loadComboGape, plot2HallFunction, plotRawHallfunction
+```{r GapePlotCheckingFunctions}
+
+# Function to load a particular sensor's Hall effect data. This assumes that a path already exists called combogapefile
+loadComboGape = function(oy) {
+	gape = read.csv(paste0(combogapefile,oy,'_combogape.csv'))
+	gape$DateTime = as.POSIXct(gape$DateTime, tz = 'UTC')
+	gape
+}
+# install.packages("tidyquant")
+# library(tidyquant)
+# ggplot(gape, aes(DateTime, Hall))+
+#   geom_line()+
+#   scale_x_datetime(limits = c(as.POSIXct("2022-07-25 03:30:00"),
+#                               as.POSIXct("2022-07-25 06:00:00")))
+
+# Function to make a quick 2-panel plot of the raw Hall sensor output and the calculate gape percentage
+#plot line that shows every 5 day subsetted chunk. pick first point and draw line for 1440*5 points (or plus 5 days) and draw vertical line. abline(v="xvaluelocation")
+
+#move 1440 rows down, figure out what time value is and feed into abline 
+plot2HallFunction = function(gape){
+	par(mfrow = c(2,1), mar = c(4,6,2,1))
+	plot(gape$DateTime, gape$Hall, type = 'l', col = 3, 
+			ylab = 'Raw Hall counts', 
+			xlab = 'Date',
+			las = 1,
+			main = gape$SN[1])
+	    abline(v = gape$DateTime[1440*15])
+	    abline(v = gape$DateTime[1440*10])
+	    abline(v = gape$DateTime[1440*5])
+	    abline(v = gape$DateTime[1440*20])
+	    abline(v = gape$DateTime[1440*25])
+	if(!all(is.na(gape[,'hallpercent']))){
+  	plot(gape$DateTime, gape$hallpercent, type = 'l', col = 2,
+  			ylab = 'Gape opening %',
+  			xlab = 'Date',
+  			las = 1,
+  			main = gape$SN[1])
+	  	abline(v = gape$DateTime[1440*15])
+	    abline(v = gape$DateTime[1440*10])
+	    abline(v = gape$DateTime[1440*5])
+	    abline(v = gape$DateTime[1440*20])
+	    abline(v = gape$DateTime[1440*25])
+  	}
+	par(mfrow=c(1,1))
+}
+
+# Function to only plot the raw Hall effect counts
+plotRawHallFunction = function(gape){
+	par(mfrow = c(1,1), mar = c(4,6,2,1))
+	plot(gape$DateTime, gape$Hall, type = 'l', col = 3, 
+			ylab = 'Raw Hall counts', 
+			xlab = 'Date',
+			las = 1,
+			main = gape$SN[1])
+
+}
+
+```
+
 #import metadata
 ```{r}
 #import csv metadata_with edits. 
@@ -790,6 +922,8 @@ metafile = loadFieldMetaData(filename = (paste0(metafilePath,"field_metadata_for
 
 #import csv maintenance
 maintenance=loadFieldMaintData(filename = (paste0(metafilePath,"lowtide_metadata - Sheet1.csv")))
+
+oystercode = unique(metafile[,'Code'])
 ```
 
 #list individal gape files and combine into one csv per SN, cut out specific times from meta data that shouldn't be used
@@ -807,7 +941,7 @@ for (oy in (oystercode) ){
   if(exists('combineddat')) { rm(combineddat)}
   # Handle the cases where an oyster (ID'd by 4-digit value at end of oystercode) moves
   # between positions within the same treatement, by simply looking for the matching
-  # 4-digit oyster code and ignoring the site/treatment/position codes
+  # 4-digit oyster code and ignoring the site/treatment/position co¬des
   serialnumber = metafile[which(substr(metafile$Code,7,10) == substr(oy,7,10)),'SN']
   loops = 1
   
@@ -818,7 +952,6 @@ for (oy in (oystercode) ){
                                  substr(metafile$Code,7,10) == substr(oy,7,10)),'StartIncludeUTC']
     endDate = metafile[which(metafile$SN == i & 
                                substr(metafile$Code,7,10) == substr(oy,7,10)),'EndIncludeUTC']
-    
     gapepath=file.path(paste0(NewportDir,"alldata/",i))
       if(!file.exists(gapepath)) {
        next
@@ -847,19 +980,46 @@ for (oy in (oystercode) ){
     if (nrow(combineddat) > 0){
       gapedat = combineddat # copy back over to this data frame for further use
       gapedat = gapedat[order(gapedat$DateTime),]
-      # Call exciseHall function to generate a master data frame of raw hall effect readings from the oysters that were present in the field.
-      gapedat = exciseHall(halldata = gapedat, metadf = metafile, maintenance = maintenance)
+      # Figure out if there's a time of death associated with this oyster code. Get all of
+      # the rows that match this oyster code and pull the contents of the timeofdeath column
+      deathrows = metafile[which(substr(metafile$Code,7,10) == substr(oy,7,10)),'timeofdeath']
+      # Check to see if any of the values in deathrows is not an NA
+      if (length(which(!is.na(deathrows))) > 0) {
+        # If we found a non-NA value in deathrows, grab it and store it in timeofdeath
+        timeofdeath = deathrows[which(!is.na(deathrows))]
+      } else {
+        # There were no non-NA values in deathrows, so set timeofdeath to NA
+        timeofdeath = NA
+      }
+     # Call exciseHall function to generate a master data frame of raw hall effect readings from the oysters that were present in the field.
+      gapedat = exciseHall(halldata = gapedat, metadf = metafile, maintenance = maintenance, timeofdeath = timeofdeath)
       write.csv(gapedat, paste0(combogapefile, oy, "_combogape.csv"), row.names = FALSE)
     }
   }
 
 } # end of oystercode for loop 
+```
+
+#Remove outliers for specific oysters.
+```{r}
+# P.M.3.1069 keep everything after 2022-10-23 21:21:00
+gapepath=file.path(paste0(combogapefile, "P.M.3.1069", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC")
+
+gapedat=gapedat %>% 
+  filter(DateTime>"2022-10-23 21:21:00")
+
+#plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+
+write.csv(gapedat, paste0(combogapefile, "P.M.3.1069", "_combogape.csv"))
 
 ```
 
 #write over combogape files to add in percent gape and percentiles for binary graphing
 ```{r calcPercentageGape,echo=showcode, eval = evalAll}
 #get data from calibration. Generate set of regression coefficients and put them in cRegress. Use cRegress to do % calculation.
+oystercode = unique(metafile[,'Code'])
 chNum=1
 cRegress = cRegressEstimate("SN20", chNum,gapecalibfile)
 
@@ -869,10 +1029,22 @@ for(oy in (oystercode)){
      next
     }
   gapedat=read.csv(gapepath)
+      if(all(is.na(gapedat[,'Hall']))){
+      next
+    }
 	# Convert the Hall effect values into estimated percent gape (0-100%)
-	gapedat[,"hallpercent"] = calcPercentGapeNLMEsubset(gapedat[,"Hall"], cRegress, percentileLim = c(0.01,0.95), maxrow=1440*6)
-	    #1440=# min in a day, *7 days for one week of sampling.
-	    #Every day 7 days calculate percent gape.
+  #1440=# min in a day, *5 days for one week of sampling.
+	#Every day 5 days calculate percent gape.
+	gapePercentage = calcPercentGapeNLMEsubset(gapedat[,"Hall"], cRegress, 
+	                                           percentileLim = c(0.01,0.95), maxrow=1440*5, 
+	                                           myPercentThreshold = 0.9)
+	if (length(gapePercentage) > 0){
+	  gapedat[,"hallpercent"] = gapePercentage
+	} else {
+	  gapedat[,'hallpercent'] = NA
+	}
+	
+
 	#make empty binary column
 	gapedat$binary=NA
 	#for hallpercent rows less than or equal to 20, write 0 in binary column
@@ -880,7 +1052,7 @@ for(oy in (oystercode)){
 	#for hallpercent rows greater than 20, write 1 in binary column
 	gapedat[which(gapedat$hallpercent>5), "binary"]=1
 	#save as one csv per SN
-	write.csv(gapedat, paste0(combogapefile, i, "_combogape.csv"))
+	write.csv(gapedat, paste0(combogapefile, oy, "_combogape.csv"))
 }
 ```
 
@@ -893,10 +1065,10 @@ allgape <- list.files(path=combogapefile, full.names = T) %>%
   dplyr::filter(!is.na(Hall))
 
 #change datetime to posixct
-allgape$DateTime=as.POSIXct(allgape$DateTime)
+allgape$DateTime=as.POSIXct(allgape$DateTime, tz="UTC")
 
 #combine metafile and allgape by SN to get treatment/site for each sensor
-allgapemeta<-merge(allgape,metafile, by='SN')
+allgapemeta<-merge(allgape,metafile[, c("Site", "Treatment","Alive","Code")], by="Code")
 
 #change order of treatment
 allgapemeta$Treatment <- factor(allgapemeta$Treatment,levels = c("Oyster", "Eelgrass", "Mud"))
@@ -904,6 +1076,24 @@ allgapemeta$Treatment <- factor(allgapemeta$Treatment,levels = c("Oyster", "Eelg
 allgapemeta$binary=as.factor(allgapemeta$binary)
 #change order of sites
 allgapemeta$Site <- factor(allgapemeta$Site,levels = c("Westcliff", "PCH", "DeAnza", "Shellmaker"))
+#make code factor
+allgapemeta$Code<-as.factor(allgapemeta$Code)
+
+### need to toss: D.O.3.1043, P.O.5.1063, S.O.5.1084, D.E.1.1034
+# W.M.5.1025 no good
+# P.O.2.1061 delete
+# S.O.1.1080 toss whole thing?
+               
+#Remove bad gape oysters
+allgapemeta=allgapemeta%>%
+  dplyr::filter(Code != "W.M.5.1025" &   #sensor not good
+           Code!="P.O.2.1061" & #sensor not good
+           Code!="S.O.1.1080" & #sensor not good
+           Code!="D.O.3.1043" & #sensor saturated
+           Code!="P.O.5.1063" & #sensor saturated
+           Code!="D.E.1.1034" & #sensor saturated
+           Code!="S.O.5.1084" & #sensor saturated
+           Code!="D.E.3.1030" ) #sensor not good
 
 remove(allgape)
 ```
@@ -912,21 +1102,21 @@ remove(allgape)
 ```{r}
 #calculate percent closed column 
 allgapemetapercentopen=as.data.frame(allgapemeta %>% 
-  dplyr::filter(SN!="SN107") %>% #remove bad quality sensors, tried to do with c() but didn't work
-  dplyr::filter(SN!="SN112")%>%
-  dplyr::filter(SN!="SN114") %>%
-  dplyr::filter(SN!="SN115") %>%
-  dplyr::filter(SN!="SN118") %>%
-  dplyr::filter(SN!="SN136") %>%
-  dplyr::filter(SN!="SN143") %>%
-  dplyr::filter(SN!="SN147") %>%
-  dplyr::filter(SN!="SN156") %>%
-  dplyr::filter(SN!="SN157") %>%
-  dplyr::filter(SN!="SN167") %>%
-  dplyr::filter(SN!="SN174") %>%
-  dplyr::filter(SN!="SN197")%>%
-  dplyr::filter(SN!="SN193") %>%
-  dplyr::filter(SN!="SN194")%>%
+  # dplyr::filter(SN!="SN107") %>% #remove bad quality sensors, tried to do with c() but didn't work
+  # dplyr::filter(SN!="SN112")%>%
+  # dplyr::filter(SN!="SN114") %>%
+  # dplyr::filter(SN!="SN115") %>%
+  # dplyr::filter(SN!="SN118") %>%
+  # dplyr::filter(SN!="SN136") %>%
+  # dplyr::filter(SN!="SN143") %>%
+  # dplyr::filter(SN!="SN147") %>%
+  # dplyr::filter(SN!="SN156") %>%
+  # dplyr::filter(SN!="SN157") %>%
+  # dplyr::filter(SN!="SN167") %>%
+  # dplyr::filter(SN!="SN174") %>%
+  # dplyr::filter(SN!="SN197")%>%
+  # dplyr::filter(SN!="SN193") %>%
+  # dplyr::filter(SN!="SN194")%>%
   group_by(SN, binary) %>% 
   summarise(n = n(), 
             Treatment=unique(Treatment), #keep treatment 
@@ -996,37 +1186,40 @@ cols[levels(my10MinuteSubset$SN)=="SN150"]="red"
 #take every 50th row from dataframe
 my10MinuteSubset = allgapemeta[seq(1,nrow(allgapemeta), by = 50),] 
 
+my10MinuteSubset$binary=as.factor(my10MinuteSubset$binary)
+
 my10MinuteSubset %>%
   #use filter to subset the rows based on the LOCATION column values
   #filter(SN == c("SN150", "SN138", "SN164", "SN143","SN191","")) %>% 
   #remove SN115 bc just looks closed for a couple days at the end. Remove SN112 bc only data in august
-  dplyr::filter(SN!="SN112")%>%
-  dplyr::filter(SN!="SN114") %>%
-  dplyr::filter(SN!="SN115") %>%
-  dplyr::filter(SN!="SN118") %>%
-  dplyr::filter(SN!="SN136") %>%
-  dplyr::filter(SN!="SN143") %>%
-  dplyr::filter(SN!="SN147") %>%
-  dplyr::filter(SN!="SN156") %>%
-  dplyr::filter(SN!="SN157") %>%
-  dplyr::filter(SN!="SN167") %>%
-  dplyr::filter(SN!="SN174") %>%
-  dplyr::filter(SN!="SN197")%>%
-  dplyr::filter(SN!="SN193") %>%
-  dplyr::filter(SN!="SN194")%>%
+  # dplyr::filter(SN!="SN112")%>%
+  # dplyr::filter(SN!="SN114") %>%
+  # dplyr::filter(SN!="SN115") %>%
+  # dplyr::filter(SN!="SN118") %>%
+  # dplyr::filter(SN!="SN136") %>%
+  # dplyr::filter(SN!="SN143") %>%
+  # dplyr::filter(SN!="SN147") %>%
+  # dplyr::filter(SN!="SN156") %>%
+  # dplyr::filter(SN!="SN157") %>%
+  # dplyr::filter(SN!="SN167") %>%
+  # dplyr::filter(SN!="SN174") %>%
+  # dplyr::filter(SN!="SN197")%>%
+  # dplyr::filter(SN!="SN193") %>%
+  # dplyr::filter(SN!="SN194")%>%
   # dplyr::filter(Site=="DeAnza")%>%
   # dplyr::filter(Treatment=="Eelgrass")%>%
   # dplyr::filter(!is.na(binary)) %>%
-  ggplot(aes(x = DateTime, col=SN))+
+  ggplot(aes(x = DateTime, col=Code))+
     #fill=factor(ifelse(SN=="SN150","Highlighted","Normal"))))+
     #geom_smooth(x=Temp.C)+
     geom_jitter(aes(y = binary), shape = 1, position = position_dodge(width=0.3))+
     #geom_line(aes(y=Prediction))+
     #geom_beeswarm(dodge.width=0,cex=2,groupOnX=FALSE)+
-    facet_grid(Treatment~.)+
-    scale_colour_manual(values=group.colors) +
+    facet_grid(Site~.)+
+    scale_x_datetime(date_labels = "%b", breaks = "1 month") +
+    #scale_colour_manual(values=group.colors) +
     scale_y_discrete(labels=c("0" = "Closed", "1" = "Open"))+
-    labs(y="Gape", x="Time")+
+    labs(y="Gape", x="")+
   theme_bw()+
   #remove SN legend, take out grid lines but keep facet lines. Change font sizes
   theme(legend.position = "none", axis.line=element_line(), panel.border = element_rect(color = "black",fill = NA,size = 1), panel.grid = element_blank(), axis.text = element_text(size = 20), axis.title = element_text(size = 30), strip.text = element_text(size = 20))
@@ -1034,7 +1227,7 @@ my10MinuteSubset %>%
 group.colors <- c(SN104 = "grey", SN107  = "grey", SN111  = "grey", SN113  = "grey", SN120  = "grey", SN123 = "grey", SN125 = "grey", SN130 = "grey", SN132 = "grey", SN133 = "grey", SN138 = "grey", SN141 = "grey", SN142 = "grey", SN144 = "grey", SN145 = "grey", SN148 = "grey", SN150="red", SN152 = "grey", SN153 = "grey", SN154 = "grey", SN159 = "grey", SN160 = "grey", SN161 = "grey", SN164 = "grey", SN170 = "grey", SN171 = "grey", SN176 = "grey", SN184 = "grey", SN187 = "grey", SN191 = "grey", SN196 = "grey")
 
 ggsave("gapeallsitesSN150.png", width = 10, height = 6)
-# 
+
 #     scale_y_continuous(
 #     # Features of the first axis
 #     name = "Hall",
@@ -1047,7 +1240,25 @@ ggplot(my10MinuteSubset, aes(x = DateTime, Prediction))+
   scale_x_datetime(labels=date_format("%Y %H:%M"), breaks = "1 hour") 
 plot(my10MinuteSubset$DateTime, my10MinuteSubset$Prediction)
 #Add tide data to graph (can overlay or be above), can put shaded regions on plots for low tide. 
-
+my10MinuteSubset$Code=as.factor(my10MinuteSubset$Code)
+my10MinuteSubset %>%
+  #dplyr::filter(Site=="DeAnza")%>%
+  dplyr::filter(Code=="W.E.5.1002")%>% 
+  #dplyr::filter(Treatment=="Eelgrass")%>%
+  dplyr::filter(!is.na(binary)) %>%
+  ggplot(aes(x = DateTime, col=Code))+
+    #geom_smooth(x=Temp.C)+
+    geom_jitter(aes(y = binary), shape = 1, position = position_dodge(width=0.3))+
+    #geom_line(aes(y=Prediction))+
+    #geom_beeswarm(dodge.width=0,cex=2,groupOnX=FALSE)+
+    #facet_grid(Treatment~.)+
+    #scale_x_datetime(date_labels = "%b", breaks = "1 month") +
+    #scale_colour_manual(values=group.colors) +
+    scale_y_discrete(labels=c("0" = "Closed", "1" = "Open"))+
+    #labs(y="Gape", x="")+
+    theme_bw()+
+  #remove SN legend, take out grid lines but keep facet lines. Change font sizes
+  theme(legend.position = "none", axis.line=element_line(), panel.border = element_rect(color = "black",fill = NA,size = 1), panel.grid = element_blank(), axis.text = element_text(size = 20), axis.title = element_text(size = 30), strip.text = element_text(size = 20))
 ```
 
 #calculate binary proportions
@@ -1179,56 +1390,128 @@ valvetreatment.glm <-  glm(formula = percentclosed ~ Treatment,
 
 ```
 
-#gape checking
-```{r GapePlotCheckingFunctions}
+#gape test plots
+```{r testPlotsGape, eval=FALSE}
+oy="W.O.5.1016"
 
-# Function to load a particular sensor's Hall effect data. This assumes that a path already exists called combogapefile
-loadComboGape = function(SN) {
-	gape = read.csv(paste0(combogapefile,SN,'_combogape.csv'))
-	gape$DateTime = as.POSIXct(gape$DateTime, tz = 'UTC')
-	gape
-}
-install.packages("tidyquant")
-library(tidyquant)
-ggplot(gape, aes(DateTime, Hall))+
-  geom_line()+
-  scale_x_datetime(limits = c(as.POSIXct("2022-07-25 03:30:00"),
-                              as.POSIXct("2022-07-25 06:00:00")))
-# Function to make a quick 2-panel plot of the raw Hall sensor output and the calculate gape percentage
-plot2HallFunction = function(gape){
-	par(mfrow = c(2,1), mar = c(4,6,2,1))
-	plot(gape$DateTime, gape$Hall, type = 'l', col = 3, 
-			ylab = 'Raw Hall counts', 
-			xlab = 'Date',
-			las = 1,
-			main = gape$SN[1])
-	
-	plot(gape$DateTime, gape$hallpercent, type = 'l', col = 2,
-			ylab = 'Gape opening %',
-			xlab = 'Date',
-			las = 1,
-			main = gape$SN[1])
-	
-	par(mfrow=c(1,1))
-}
-
-# Function to only plot the raw Hall effect counts
-plotRawHallFunction = function(gape){
-	par(mfrow = c(1,1), mar = c(4,6,2,1))
-	plot(gape$DateTime, gape$Hall, type = 'l', col = 3, 
-			ylab = 'Raw Hall counts', 
-			xlab = 'Date',
-			las = 1,
-			main = gape$SN[1])
-
-}
+# for (oy in (oystercode)){
+  filecheck = file.path(paste0(combogapefile,oy,'_combogape.csv'))
+  if(!file.exists(filecheck)) {
+   next
+  }
+  png(file=paste0(plots,"hallpercenttest/W.O.5.1016/",oy,"_reusemaxhall_test.png"), width=800, height=600)
+  testdata=loadComboGape(oy)
+    if(all(is.na(testdata[,'Hall']))){
+    next
+  }
+  plot2HallFunction(testdata)
+  dev.off()
+  remove(testdata)
+# }
 
 ```
 
-#gape test plots
-```{r testPlotsGape, eval=FALSE}
+#add temp data on SN150 
+```{r}
 
-SN142 = loadComboGape('SN142')
+#without temp
+ggplot(SN150, aes(DateTime, Hall))+
+  geom_line() + 
+  theme_classic()+
+  ylim(0,400)+
+  labs(y="Raw Gape Data", x="Date")+
+  theme(axis.text = element_text(size = 15), axis.title = element_text(size = 25))
+
+ggsave("SN150_gape.png", width=6.5, height=5)
+
+#with temp
+scale=.1
+ggplot(SN150, aes(DateTime, Hall))+
+  geom_line() + 
+  #geom_line(aes(y=Temp.C/scale), color="red")+
+  scale_y_continuous(
+    # Features of the first axis
+    name = "Raw Gape Data",
+    # Add a second axis and specify its features
+    sec.axis = sec_axis(trans=~.*scale, name="Temperature (°C)"))+
+  theme_classic()+
+  labs(y="Raw Gape Data", x="Date")+
+  theme(axis.text = element_text(size = 15), axis.title = element_text(size = 25))
+  
+ggsave("SN150_with_temp.png", width=6.5, height=5)
+
+```
+
+#look for saturated sensors
+```{r}
+saturated=allgape[allgape$Hall< 20, ]
+
+### need to toss: D.O.3.1043, P.O.5.1063, S.O.5.1084, D.E.1.1034
+# W.M.5.1025 no good
+# P.O.2.1061 delete
+# P.M.3.1069 keep everything after 2022-10-23 21:21:00
+# S.O.1.1080 toss whole thing?
+allgape %>%
+  dplyr::filter(Code=="W.E.6.1004")%>% 
+  #dplyr::filter(DateTime<as.POSIXct("2022-10-17"))%>%
+  ggplot(aes(x=DateTime, y=Hall))+
+  geom_point()
+```
+
+#find oyster field death times
+```{r}
+# Find oysters that died and cut off the gape after they died- but at what point? Look at raw data--> see it drift up to fully open and then flatline. base plot use identify function, lets you click on point and returns x and y coordinates so you can see DateTime that died.
+# W.M.5.1025 no good
+# P.O.2.1061 delete
+# P.M.3.1069 keep everything after 2022-10-23 21:21:00
+# S.O.1.1080 toss whole thing?
+
+fielddeath=allgapemeta %>%
+  dplyr::filter(Code=="W.E.5.1002") #%>%
+  #dplyr::filter(DateTime<as.POSIXct("2023-02-07 23:26:00"))
+
+plot(fielddeath$DateTime, fielddeath$Hall)
+
+identify(fielddeath$DateTime, fielddeath$Hall)
+
+fielddeath$DateTime[128710]
+
+```
+
+
+
+#Extra code
+```{#r extra tide code}
+library(rnoaa)
+library(tidyverse)
+library(ggplot2)
+library(suncalc)
+library(scales)
+
+july.tides <- as.data.frame(coops_search(station_name = 9410660,
+                                          begin_date = 20220701, end_date = 20210731,
+                                          datum = "MLLW", product = "predictions"))
+
+march.tides <- march.tides %>%
+  mutate(yyyy.mm.dd = as.Date(predictions.t, tz = "EST"))
+dates <- unique(march.tides$yyyy.mm.dd)
+sunlight.times <- getSunlightTimes(date = seq.Date(as.Date("2020/3/1"), as.Date("2020/3/31"), by = 1),
+                                   lat = 39.5817, lon = -75.5883, tz = "EST")
+
+for (i in seq_along(dates)) {
+  plot <- ggplot(subset(march.tides, march.tides$yyyy.mm.dd==dates[i])) +
+    aes(x = predictions.t, y = predictions.v) +
+    geom_line(size = 1L, colour = "#0c4c8a") +
+    theme_bw() +
+    geom_vline(xintercept = sunlight.times$sunrise) +
+    geom_vline(xintercept = sunlight.times$sunset) +
+    geom_vline(xintercept = sunlight.times$dawn, linetype="dotted") +
+    geom_vline(xintercept = sunlight.times$dusk, linetype="dotted") +
+    ggtitle(dates[i]) +
+    scale_x_datetime(labels = date_format("%b %d %H:%M", tz = "EST"))
+  print(plot)
+}
+S.M.2.1087 = loadComboGape('S.M.2.1087')
 plotRawHallFunction(SN142)
 plot2HallFunction(SN142)
 remove(SN142)
@@ -1468,83 +1751,6 @@ remove(SN194)
 SN196 = loadComboGape('SN196')
 plot2HallFunction(SN196)
 remove(SN196)
-
-#attempt at for loop to do this
-# serialnumber=unique(metafile[,1])
-# j=loadComboGape(SN165)
-# for (i in serialnumber) {
-#   if (!exists(paste0(combogapefile,i,'_combogape.csv')))
-#     continue;
-#   j=loadComboGape(i)
-#   plot2HallFunction(j)
-#   png("SN130.png")
-# }
-
-```
-
-#add temp data on SN150 
-```{r}
-
-#without temp
-ggplot(SN150, aes(DateTime, Hall))+
-  geom_line() + 
-  theme_classic()+
-  ylim(0,400)+
-  labs(y="Raw Gape Data", x="Date")+
-  theme(axis.text = element_text(size = 15), axis.title = element_text(size = 25))
-
-ggsave("SN150_gape.png", width=6.5, height=5)
-
-#with temp
-scale=.1
-ggplot(SN150, aes(DateTime, Hall))+
-  geom_line() + 
-  #geom_line(aes(y=Temp.C/scale), color="red")+
-  scale_y_continuous(
-    # Features of the first axis
-    name = "Raw Gape Data",
-    # Add a second axis and specify its features
-    sec.axis = sec_axis(trans=~.*scale, name="Temperature (°C)"))+
-  theme_classic()+
-  labs(y="Raw Gape Data", x="Date")+
-  theme(axis.text = element_text(size = 15), axis.title = element_text(size = 25))
-  
-ggsave("SN150_with_temp.png", width=6.5, height=5)
-
-```
-
-
-#Extra code
-```{#r extra tide code}
-library(rnoaa)
-library(tidyverse)
-library(ggplot2)
-library(suncalc)
-library(scales)
-
-july.tides <- as.data.frame(coops_search(station_name = 9410660,
-                                          begin_date = 20220701, end_date = 20210731,
-                                          datum = "MLLW", product = "predictions"))
-
-march.tides <- march.tides %>%
-  mutate(yyyy.mm.dd = as.Date(predictions.t, tz = "EST"))
-dates <- unique(march.tides$yyyy.mm.dd)
-sunlight.times <- getSunlightTimes(date = seq.Date(as.Date("2020/3/1"), as.Date("2020/3/31"), by = 1),
-                                   lat = 39.5817, lon = -75.5883, tz = "EST")
-
-for (i in seq_along(dates)) {
-  plot <- ggplot(subset(march.tides, march.tides$yyyy.mm.dd==dates[i])) +
-    aes(x = predictions.t, y = predictions.v) +
-    geom_line(size = 1L, colour = "#0c4c8a") +
-    theme_bw() +
-    geom_vline(xintercept = sunlight.times$sunrise) +
-    geom_vline(xintercept = sunlight.times$sunset) +
-    geom_vline(xintercept = sunlight.times$dawn, linetype="dotted") +
-    geom_vline(xintercept = sunlight.times$dusk, linetype="dotted") +
-    ggtitle(dates[i]) +
-    scale_x_datetime(labels = date_format("%b %d %H:%M", tz = "EST"))
-  print(plot)
-}
 ```
 
 ```{#r convertHalltobinary attempts}
