@@ -12,72 +12,90 @@ Butterworth has settings to tweak to change how much smoothing it does. Butterwo
 ```{r knitroptions, echo=FALSE, cache=FALSE}
 options(replace.assign = TRUE, width = 60)
 knitr::opts_chunk$set(tidy = FALSE)
-knitr::opts_chunk$set(fig.path = 'figs/', cache.path = 'cache/', 
-		fig.width = 5, fig.height = 5, dpi = 600,
-		cache = TRUE, par = TRUE)
+#knitr::opts_chunk$set(fig.path = 'figs/', cache.path = 'cache/', 
+#		fig.width = 5, fig.height = 5, dpi = 600,
+#		cache = TRUE, par = TRUE)
 
 evalAll = FALSE # Set true to run all the chunks, even the long ones
 # Setting this true will re-generate all of the concatenated files from the
 # raw data files and re-run the gape sensor calibration and percentage 
 # conversion steps, then save new concatenated csv files.
-```
-
-```{r knitSetup, echo=FALSE, cache=FALSE}
 showcode = FALSE # Set true to print out all R code in final document
 ```
 
-```{r fileLocations, echo=FALSE}
-# Directory path on Lauren's machine
-setwd("~/Documents/Oyster/Rcode")
-NewportDir = '../data/Newport_SSINP/'
-WestcliffEelgrassDir = 'Westcliff/Eelgrass/'
-DeAnzaMud142Dir='De Anza/Mud/SN142/'
-
-```
-
-```{r getIRdata, echo=FALSE}
-# Get a list of the IR heart sensor files by looking for filenames that end in IR.csv
-#IRfilenames = dir(path = paste0(NewportDir, DeAnzaMud142Dir), full.names=TRUE, pattern= "*IR.csv")
-
-```
-
-```{r loadPackages}
+#libraries
+```{r loadLibraries, message=FALSE}
 library(signal)
 library(pracma)
 library(forecast)
 ```
 
+#import files
+```{r fileLocations, echo=FALSE}
+# Directory path on Lauren's machine
+setwd("~/Documents/Oyster/Rcode")
+
+# Comment out one of the two localpath lines below depending on what computer you're on
+#localpath = '../../data/'  # Luke's path
+localpath = '../data/'  # Lauren's path
+
+hrpath = '../data/Newport_SSINP/alldata/'
+
+#meta file with serial numbers
+metafilePath = paste0(localpath,'Newport_SSINP/metadata/')
+
+#tides
+julyaugusttides=read.csv("../data/Newport_SSINP/tides/LAtides202207-202208.csv")
+
+#plots
+plots=paste0(localpath,'Newport_SSINP/plots/')
+```
+
+#import metadata
+```{r}
+#import csv metadata_with edits. 
+metafile = loadFieldMetaData(filename = (paste0(metafilePath,"field_metadata_forcoding - Sheet1.csv")))
+
+#import csv maintenance
+maintenance=loadFieldMaintData(filename = (paste0(metafilePath,"lowtide_metadata - Sheet1.csv")))
+
+oystercode = unique(metafile[,'Code'])
+```
+
 ```{r importHeartFiles, echo=showcode, cache=TRUE}
+#use unique() on first column. Save result as "serialnumber"
+serialnumber=unique(metafile[,1])
+oystercode = unique(metafile[,'Code'])
+
 #Load files
-HeartDir = '~/Documents/Oyster/data/Newport_SSINP/De Anza/Eelgrass/SN150'
+HeartDir = '~/Documents/Oyster/data/Newport_SSINP/alldata/SN150'
 
 #Pull out IR csv files from HeartDir 
-files = dir(HeartDir, full.names=TRUE,
-				pattern = '*IR.csv')
+files = dir(HeartDir, full.names=TRUE, pattern = '*IR.csv')
 
 for (i in 1:length(files)){
 	hdr  = scan(files[i], nlines = 1, what = character(),sep = ',')
 	temp = read.table(files[i],skip = 1, header = FALSE, sep = ',', na.strings=c("","NA"))
-	#temp = temp[,-11] # remove empty column *NOTE* be careful here, check your input files
+	# temp = temp[,-11] # remove empty column *NOTE* be careful 
+	# here, check your input files
 	colnames(temp) = hdr
-#			temp = read.csv(files[i])
-
+  # temp = read.csv(files[i])
 	if (i == 1) {
 		Heart = temp
 	} else if (i > 1){
 		Heart = rbind(Heart,temp)
 	}
 }
+
 # Convert time stamps to POSIX
 Heart$DateTime = as.POSIXct(Heart$DateTime, tz = 'UTC')
-#Heart$DateTimePST = Heart$DateTime
 #attr(Heart$DateTimePST,'tzone') = 'etc/GMT+8' # Create Pacific Standard Time version
 
 ```
 
 ```{r testheartratefilter, echo=showcode , eval=evalAll}
-# Some manual test code used to develop the beats-per-minute calculations
-# and filtering settings
+# Some manual test code used to develop the 
+# beats-per-minute calculations and filtering settings
 
 Fs = 0.125 # 8Hz sampling rate, sampling interval = 0.125 seconds
 # Step through 1 minute at a time
@@ -86,35 +104,46 @@ mysensor = 'IR'
 t1 = which.min(abs(Heart$DateTime - mytime)) #compares all times to "my time" to find "my time". T1 gives index for "smallest difference". 
 chunklength = 240 # number of samples to use
 # Test that we've hit the chosen minute (not just the closest time)
-#if (difftime(mytime,surfHeart$DateTime[t1], units = 'secs') == 0){
 if (difftime(mytime,Heart$DateTime[t1], units = 'secs') %in% c(-2,-1,0,1,2)){
 	# Extract a chunk of samples slightly longer than target length
 	temp = Heart[t1:(t1+(chunklength-1)),]
   }
 
-	# Add milliseconds onto the timestamps. So there is datetime for each reading down to the millisecond. Add 0.125 seconds to each reading. Very last reading is the last millisecond in 30 seconds. (30.875seconds). 
+	# Add milliseconds onto the timestamps. So there is 
+  # datetime for each reading down to the millisecond. 
+  # Add 0.125 seconds to each reading. Very last reading
+  # is the last millisecond in 30 seconds. (30.875seconds). 
 
 	temp$DateTimeMS = temp$DateTime
 	
-	#diffs = diff(temp$startMillis) / 1000
-	temp$DateTimeMS[2:nrow(temp)] = temp$DateTimeMS[1] + cumsum()
+	diffs = diff(temp$startMillis) / 1000
+	temp$DateTimeMS[2:nrow(temp)] = temp$DateTimeMS[1] + cumsum(diffs)
 	
-	#diffs = diff(temp$startMillis) / 1000
-  #temp$DateTimeMS[2:nrow(temp)] = temp$DateTimeMS[1] + cumsum(diffs)
-	
-#Make loop from row 1:240 that takes previous row and adds on 0.125. 
-#Go through first 240 rows, then after hit 240-> reset time using DateTime and start adding again. Then after another 240, reset time and start again. If jumped 240 rows and didn't see POSIXct time value at the end, then stop b/c didn't take 240 measurements. 
+# Make loop from row 1:240 that takes previous row and 
+#	adds on 0.125. 
+# Go through first 240 rows, then after hit 240-> 
+# reset time using DateTime and start adding again. 
+# Then after another 240, reset time and start again. 
+# If jumped 240 rows and didn't see POSIXct time value 
+# at the end, then stop b/c didn't take 240 measurements. 
 for(j in 2:240){
   temp$DateTimeMS[j]=temp$DateTimeMS[j-1]+0.125
 }
 
-#go through surfHeart and plot each 240 chunk to see if can see HR. Make function that fills in timestamps to each 240 chunk so don't have to pull out chunks first. 
+# go through surfHeart and plot each 240 chunk to 
+# see if can see HR. Make function that fills in 
+# timestamps to each 240 chunk so don't have 
+# to pull out chunks first. 
 plot(x=temp$DateTimeMS, y=temp$IR, type="l", main="De Anza Mud SN142 2022-07-28 00:20:00")
 
 	# Handle cases where single very low values appear due to spurious values
 	# being recorded in the dataset. Replace with a linear interpolation of
-	# of the two neighboring values. First detrend the raw values
-#detrend fits regression through points, figures out slope, takes out slope from all values to get rid of slow trend down or up in IR rates for the plots. 
+	# of the two neighboring values. First detrend the raw values.
+
+# detrend fits regression through points, figures out
+# slope, takes out slope from all values to get rid 
+# of slow trend down or up in IR rates for the plots. 
+
 # 	detrendedIR = pracma::detrend(temp[,mysensor])
 # 	# Next look at the detrended values and look for spurious low values
 # 	# For instance, a good heart signal might oscillate between -200 & +300
@@ -123,7 +152,7 @@ plot(x=temp$DateTimeMS, y=temp$IR, type="l", main="De Anza Mud SN142 2022-07-28 
 # 	# Calculate the standard deviation of the data set, and then find values
 # 	# that are more than 3 SD away from the mean (which should be ~zero in the
 # 	# detrended data)
-# #take out outliers essentially. Take out data points >3x SD
+#   # take out outliers essentially. Take out data points >3x SD
 # 	spuriousVals = which(abs(detrendedIR) > (3*sd(detrendedIR)) )
 # 
 # 
@@ -141,9 +170,10 @@ plot(x=temp$DateTimeMS, y=temp$IR, type="l", main="De Anza Mud SN142 2022-07-28 
 # 		    temp=temp[2:nrow(temp),]
 # 		  } else if(indx>2){
 # 		    # Get the row index for this spurious value
-# 			# Replace the spurious value with the average of the values immediately
+# 			# Replace the spurious value with the average 
+        # of the values immediately
 # 			# before and after the spurious value
-# #				temp[indx,sensor] = mean(c(temp[indx-1,sensor],temp[indx+1,sensor]))
+#				temp[indx,sensor] = mean(c(temp[indx-1,sensor],temp[indx+1,sensor]))
 # 			temp[indx,mysensor] = mean(temp[(indx-2):(indx+2),mysensor], na.rm=TRUE)
 # 		  }
 # 			 
@@ -153,12 +183,10 @@ plot(x=temp$DateTimeMS, y=temp$IR, type="l", main="De Anza Mud SN142 2022-07-28 
 	# With the spurious values replaced by interpolated values, re-run the 
 	# detrending routine
 	########################################
-
 	detrendedIR = pracma::detrend(temp[,"IR"])
 	
-	
-	
-	# Define a butterworth filter- generate smooth version of noisy graph so can see smooth peaks
+	# Define a butterworth filter- generate smooth
+  # version of noisy graph so can see smooth peaks.
 	# Consider using the bandpass filter rather than just a lowpass filter
 	# because of the tendency for the IR heartrate signal to drift up and 
 	# down in relation to ambient light, which tends to induce low-frequency
@@ -221,9 +249,9 @@ lines(y) #add smooth version in black on top of graph
 	# Print the estimated bpm from the pracma::findpeaks routine, but 
 	# you need to double the number of peaks to get bpm if your time series
 	# is only 30 seconds long
-	mtext(side = 3, line = 3, text = paste0('pracma bpm: ', nrow(res)*2))
-	mtext(side = 3, line = 4, text = paste(mysensor, mytime))
-	mtext(side = 3, line = 2, text = paste('Spectrum BPM:' ,round(bpm,2)))
+	mtext(side = 3, line = 2, text = paste0('pracma bpm: ', nrow(res)*2))
+	mtext(side = 3, line = 3, text = paste(mysensor, mytime))
+	mtext(side = 3, line = 1, text = paste('Spectrum BPM:' ,round(bpm,2)))
 #} 
 #ideally see similar BPM for forecast, pracma, and spectrum calculations. Go through other samples from other times/oysters and get a sense for what "good"/"bad" signals look like. See which routine gives the most accurate BPM. 
 #Pracma individually picks out each peak (can plot results). Can't plot results from forecast because doesn't call out individual peaks, just gives summary number. 
@@ -430,8 +458,6 @@ detrendedIR = pracma::detrend(temp[,mysensor])
 # detrended data)
 spuriousVals = which(abs(detrendedIR) > (3*sd(detrendedIR)) )
 
-
-
 if ( length(spuriousVals) > 0) {
 	# Convert to NAs 
 	temp[spuriousVals,mysensor] = NA
@@ -448,8 +474,6 @@ rm(spuriousVals)
 # With the spurious values replaced by interpolated values, re-run the 
 # detrending routine
 detrendedIR = pracma::detrend(temp[,mysensor])
-
-
 
 # Define a butterworth filter
 # Consider using the bandpass filter rather than just a lowpass filter
@@ -478,7 +502,6 @@ bpm = 60 * mypeakfreq
 #	myfftraw = spectrum(detrendedIR)
 #	myfft2 = spectrum(y)
 #	par(op)
-
 
 # Plot the raw detrended signal
 par(mar = c(4.5,5.5,5,1))
@@ -523,13 +546,11 @@ mtext(side = 2, text = 'Detrended IR signal', line = 4, cex = mycex)
 
 ```
 
-```{r processSurfaceHeartheartrates,echo=showcode, eval = evalAll}
+```{r processheartrates,echo=showcode, eval = evalAll}
 # Go through the different sensors in the raw surfHeart data frame and 
 # calculate beats per minute estimates. The resulting data will be
 # written to a csv file for faster reloading in the future. This 
 # routine takes about 1.5hr for all 8 sensors to process. 
-
-
 
 # Step through 1 minute at a time
 mytime = as.POSIXct('2022-07-28 00:30:00',tz='etc/GMT+8')
