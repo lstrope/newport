@@ -1444,6 +1444,24 @@ oy="W.O.5.1016"
 ```
 
 
+```{r lukeScratch2, eval = FALSE}
+require(nlme)
+gapecalibfile = paste0(localpath,'Newport_SSINP/calibration/202303_calibrations_ostrea - Sheet1.csv')
+
+gapeCalibs = read.csv(gapecalibfile)
+# Reshape to long format
+gC = reshape(gapeCalibs, varying = list(c('Reading1','Reading2','Reading3')),
+				direction = 'long')
+# Remove the saturated sensors P.M.3.1069 and D.M.2.1052
+gC = gC[-(which(gC$Code == 'P.M.3.1069')), ]
+gC = gC[-(which(gC$Code == 'D.M.2.1052')), ]
+
+gC2 = groupedData(Reading1~Distance_mm|Code/time,data=gC)
+		
+
+```
+
+
 ```{r lukeScratch1, eval = FALSE}
 # Messing around with the Hall data for growing oysters
 
