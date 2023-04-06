@@ -18,6 +18,9 @@ editor_options:
 
 ##Callibration stuff???
 
+Figure out why the combogape file has a bunch of extraneous columns added onto 
+the front of the file. They may be rownumbers getting saved as new columns
+
 ### calculate individual % open/closed. Then take average of all oysters in each treatment/site/by month but average has to be weighted bc some oysters only collect for 1 day vs others for 3 months. Then somehow do variance with weighted averages. 
 ```{r setup, include=FALSE} 
 knitr::opts_chunk$set(echo = TRUE)
@@ -61,7 +64,7 @@ plots=paste0(localpath,'Newport_SSINP/plots/')
 ```
 
 #Functions: gapBounds, gapBounds2, hallFilter, DistFromCounts, percentileRange, calcPercentGapeNLME, calcPercentGapeNLMEsubset, CRegressEstimate
-```{r gapBoundsFunctions-, echo=showcode}
+```{r gapBoundsFunctions, echo=showcode}
 
 # A set of functions originally taken from MusselTracker_data_proc4.R to 
 # handle the gape data
@@ -217,7 +220,7 @@ gapBounds2=function(mygaps, maxrow){
 }
 ```
 
-```{r hallFilter function}
+```{r hallFilter_function}
 ################################################################################
 ### hallFilter function
 #' A function to apply a Butterworth 1st order low-pass filter to a vector
@@ -262,7 +265,7 @@ hallFilter = function(hallData){
 }
 ```
 
-```{r DistFromCounts function}
+```{r DistFromCounts_function}
 ################################################################################
 ### DistFromCounts function
 # Define a non-linear function that allows you to plug in a Hall effect sensor
@@ -295,7 +298,7 @@ DistFromCounts <- function(Counts, a,b,c){
 }
 ```
 
-```{r percentileRange function}
+```{r percentileRange_function}
 ################################################################################
 ### percentileRange function
 # Define a function to calculate the average reading for the upper and lower
@@ -339,7 +342,7 @@ percentileRange <- function (Hallvec, percentileLim = c(0.01,0.99)){
 }
 ```
 
-```{r calcPercentGapeNLME function}
+```{r calcPercentGapeNLME_function}
 ################################################################################
 ### calcPercentGapeNLME function
 # Use this function to calculate the percentage gape (0-100%)
@@ -403,7 +406,7 @@ calcPercentGapeNLME <- function (hallData, cRegress, percentileLim = 0.01){
 
 ```
 
-```{r calcPercentGapeNLMEsubset function}
+```{r calcPercentGapeNLMEsubset_function}
 ################################################################################
 ### calcPercentGapeNLMEsubset function
 # Use this function to calculate the percentage gape (0-100%) of only a subset of data (days) at a time to account for growth of oyster shell. 
@@ -535,7 +538,7 @@ calcPercentGapeNLMEsubset <- function (hallData, cRegress, percentileLim = c(0.0
 }	# end of calcPercentGapeNLME function
 ```
 
-```{r cRegress function}
+```{r cRegress_function}
 #cRegressEstimate helps calibrate sensors using CalibFileName.csv file 
 ################################################################################
 ################################################################################
@@ -1439,6 +1442,72 @@ oy="W.O.5.1016"
 # }
 
 ```
+
+
+```{r lukeScratch1, eval = FALSE}
+# Messing around with the Hall data for growing oysters
+
+# gapedat should hold data for oyster W.O.5.1016
+oy="W.O.5.1016"
+gapedat=loadComboGape(oy)
+gapedat$DateTime = as.POSIXct(gapedat$DateTime, tz='UTC')
+
+#plot(gapedat$DateTime, gapedat$Hall, type = 'l')
+
+# It looks like the lower bound starts trending up quicker around Aug 1 2022
+d1 = as.POSIXct('2022-08-01 00:00')
+
+gape1 = gapedat[gapedat$DateTime >= d1, c('DateTime','Hall','hallpercent')]
+
+plot(gape1$DateTime, gape1$Hall, type = 'l')
+
+
+########################
+# Less fancy, just grab the min at the start and end of the series, and
+# fit a line to those two points to use as the correction
+min1 = which.min(gape1$Hall[1:1440])  # 1 day of data at 1min interval = 1440
+lastday = gape1[(nrow(gape1)-1440):nrow(gape1),] # subset last day of data
+min2 = which.min(lastday$Hall)
+bottomline = rbind(gape1[min1,], lastday[min2,])
+# Fit a straight line between the 2 minimum values
+mod1 = lm(Hall~DateTime,data = bottomline)
+# Generate a set of best fit points along the line, for each original time point
+newy = predict(mod1, newdata = gape1[c('DateTime','Hall')])
+# Subtract off the initial minimum Hall value so that newy2 represents the
+# offset below each point in the dataset
+newy2 = newy - bottomline$Hall[1]
+# Subtract off newy2 (offset) from each original Hall value. The offset will
+# be larger for later dates if the minimum data were trending upwards
+gape1$Hall2 = gape1$Hall - newy2
+# Show the results
+plot(gape1$DateTime, gape1$Hall, type = 'l') # Raw Hall data
+abline(mod1, col = 1) # the regression line
+lines(gape1$DateTime, gape1$Hall2, col = 4) # The adjusted Hall data
+abline(h = bottomline$Hall[1], col = 4)
+
+# Comments after playing with this: The simple algorithm does the thing I 
+# expect it to do, adjusting the rising Hall values down to a flat baseline. 
+# However, what you also see is that the maximum (presumed 100% opening) values
+# start to shrink through time after the downward correction. This happens 
+# because the actual range of Hall values is getting smaller as the animal 
+# grows and the baseline closed value shifts upwards. This is a result of the
+# curvelinear response of the hall effect sensor and the fact that when you
+# start with the magnet further from the Hall sensor in the closed position,
+# any opening of the shell results in a comparatively smaller change in the
+# Hall value, because you're starting in a less-sensitive portion of the Hall
+# sensor's range. Therefore it may be counterproductive to adjust these Hall
+# signals down to have a flat baseline, because it will later result in a
+# calculation of a smaller % opening if the total range is shrinking through 
+# time. Instead we want to keep the shifting baseline information intact,
+# and use it alongside sensor calibration data that come from different starting
+# values to adjust the estimated shell opening values into percentages. 
+
+
+
+```
+
+
+
 
 #add temp data on SN150 
 ```{r}
