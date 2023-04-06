@@ -12,10 +12,6 @@ editor_options:
 #Get max of percentilRange and use as raw hall value. Then plug in as argument in 
 # Do this with aVal and bVal
 
-#plot a line every 5 days to see where it is chunking out the data 
-
-##Look at raw gape data vs % gape data. To make sure there aren't huge values throwing off the max open %. 
-
 ##Callibration stuff???
 
 Figure out why the combogape file has a bunch of extraneous columns added onto 
@@ -61,6 +57,7 @@ julyaugusttides=read.csv("../data/Newport_SSINP/tides/LAtides202207-202208.csv")
 
 #plots
 plots=paste0(localpath,'Newport_SSINP/plots/')
+
 ```
 
 #Functions: gapBounds, gapBounds2, hallFilter, DistFromCounts, percentileRange, calcPercentGapeNLME, calcPercentGapeNLMEsubset, CRegressEstimate
@@ -636,6 +633,7 @@ cRegressEstimate <- function(SN, Channel, gapeCalibFile){
 ```{r importFunctions, echo=showcode}
 
 ########################################
+# loadFieldMetaData function
 #' Load a csv data file containing deployment metadata and maintenance data
 #' 
 #' The deployment metadata file should contain entries for each oyster and 
@@ -673,7 +671,10 @@ loadFieldMaintData <- function(filename,timezone = 'UTC'){
 	maintdata # return data frame
 }
 
-# This function deals with the GAPE data files that have an unnecessary comma at the end of each row of data, which messes with the read.csv import function
+################################################################
+# ConcatGapeFiles
+# This function deals with the GAPE data files that have an 
+# unnecessary comma at the end of each row of data, which messes with the read.csv import function
 
 #' Concatenate multiple daily gape files into one data frame
 #' 
@@ -955,6 +956,9 @@ metafile = loadFieldMetaData(filename = (paste0(metafilePath,"field_metadata_for
 maintenance=loadFieldMaintData(filename = (paste0(metafilePath,"lowtide_metadata - Sheet1.csv")))
 
 oystercode = unique(metafile[,'Code'])
+
+#import growth measurements
+growth=read.csv(paste0(metafilePath, "growth_measurements - Sheet1.csv"))
 ```
 
 #list individal gape files and combine into one csv per SN, cut out specific times from meta data that shouldn't be used
@@ -1594,6 +1598,15 @@ fielddeath$DateTime[128710]
 
 ```
 
+#growth data
+```{r}
+growth$Date=as.Date(growth$Date)
+growth %>% 
+  dplyr::filter(Code=="D.E.5.1031") %>% 
+  ggplot(growth, aes(Date, Length_mm))+
+  labs(title="D.E.2.1028")
+  geom_line()
+```
 
 
 #Extra code
