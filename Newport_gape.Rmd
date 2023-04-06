@@ -1043,7 +1043,7 @@ gapedat=gapedat %>%
 
 #plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
 
-write.csv(gapedat, paste0(combogapefile, "P.M.3.1069", "_combogape.csv"))
+write.csv(gapedat, paste0(combogapefile, "P.M.3.1069", "_combogape.csv"), row.names=FALSE)
 
 ```
 
@@ -1084,7 +1084,7 @@ oy="W.O.5.1016"
 	#for hallpercent rows greater than 20, write 1 in binary column
 	gapedat[which(gapedat$hallpercent>5), "binary"]=1
 	#save as one csv per SN
-	write.csv(gapedat, paste0(combogapefile, oy, "_combogape.csv"))
+	write.csv(gapedat, paste0(combogapefile, oy, "_combogape.csv"), row.names=FALSE)
 #}
 ```
 
