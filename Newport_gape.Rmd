@@ -972,7 +972,7 @@ for (oy in (oystercode) ){
   if(exists('combineddat')) { rm(combineddat)}
   # Handle the cases where an oyster (ID'd by 4-digit value at end of oystercode) moves
   # between positions within the same treatement, by simply looking for the matching
-  # 4-digit oyster code and ignoring the site/treatment/position co¬des
+  # 4-digit oyster code and ignoring the site/treatment/position codes
   serialnumber = metafile[which(substr(metafile$Code,7,10) == substr(oy,7,10)),'SN']
   loops = 1
   
