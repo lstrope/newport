@@ -51,6 +51,50 @@ julyaugusttides=read.csv("../data/Newport_SSINP/tides/LAtides202207-202208.csv")
 plots=paste0(localpath,'Newport_SSINP/plots/')
 ```
 
+#Functions: loadFieldMetaData, loadFieldMaintData
+```{r loadFieldMetaData}
+########################################
+# loadFieldMetaData function
+#' Load a csv data file containing deployment metadata and maintenance data
+#' 
+#' The deployment metadata file should contain entries for each oyster and 
+#' its associated hall effect sensor channel for a given period of time denoted 
+#' by the timestamps in 2 columns titled StartIncludeUTC and EndIncludeUTC, which
+#' are assumed to have Excel-formatted date and time stamps in the UTC time zone
+#' marking the start and end of each known-good deployment period (thus ignoring
+#' time periods when the sensors were pulled from the mooring for maintenance or
+#' other interruptions). 
+#' 
+#' @param filename The path and filename of the metadata csv file
+#' @param timezone The timezone of the timestamp data in the metadata file. 
+#' Default = UTC.
+#' @return A data frame containing the same original columns as the metadata 
+#' file, but with timestamps formatted as POSIXct values in the appropriate
+#' time zone. 
+
+loadFieldMetaData <- function(filename, timezone = 'UTC'){
+	metadata = read.csv(file= filename)
+	metadata$StartIncludeUTC = as.POSIXct(metadata$StartIncludeUTC,
+			format = '%m/%d/%Y %H:%M',tz = 'UTC')
+	metadata$EndIncludeUTC = as.POSIXct(metadata$EndIncludeUTC,
+			format = '%m/%d/%Y %H:%M',tz = 'UTC')
+		metadata$timeofdeath = as.POSIXct(metadata$timeofdeath,
+			format = '%m/%d/%Y %H:%M',tz = 'UTC')
+	metadata # return data frame
+}
+
+loadFieldMaintData <- function(filename,timezone = 'UTC'){
+	maintdata = read.csv(file=filename)
+	maintdata$StartMaintUTC = as.POSIXct(maintdata$StartMaintUTC,
+			format = '%m/%d/%Y %H:%M',tz = 'UTC')
+	maintdata$EndMaintUTC = as.POSIXct(maintdata$EndMaintUTC,
+			format = '%m/%d/%Y %H:%M',tz = 'UTC')
+	maintdata # return data frame
+}
+
+```
+
+
 #import metadata
 ```{r}
 #import csv metadata_with edits. 
@@ -73,6 +117,7 @@ HeartDir = '~/Documents/Oyster/data/Newport_SSINP/alldata/SN150'
 #Pull out IR csv files from HeartDir 
 files = dir(HeartDir, full.names=TRUE, pattern = '*IR.csv')
 
+#pull HR data and put in Heart
 for (i in 1:length(files)){
 	hdr  = scan(files[i], nlines = 1, what = character(),sep = ',')
 	temp = read.table(files[i],skip = 1, header = FALSE, sep = ',', na.strings=c("","NA"))
@@ -130,7 +175,7 @@ for(j in 2:240){
   temp$DateTimeMS[j]=temp$DateTimeMS[j-1]+0.125
 }
 
-# go through surfHeart and plot each 240 chunk to 
+# go through Heart and plot each 240 chunk to 
 # see if can see HR. Make function that fills in 
 # timestamps to each 240 chunk so don't have 
 # to pull out chunks first. 
