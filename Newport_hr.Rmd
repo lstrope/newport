@@ -11,6 +11,7 @@ Do with 5 oysters at diff times of the day and get good graphs with consistent H
 Butterworth has settings to tweak to change how much smoothing it does. Butterworth targeted for Gabby's sensors so may need to smooth more/less than is written. Look through data first before tweaking. 
 ```{r knitroptions, echo=FALSE, cache=FALSE}
 options(replace.assign = TRUE, width = 60)
+options(digits.secs = 3)  # Needed to show and keep milliseconds values
 knitr::opts_chunk$set(tidy = FALSE)
 #knitr::opts_chunk$set(fig.path = 'figs/', cache.path = 'cache/', 
 #		fig.width = 5, fig.height = 5, dpi = 600,
@@ -40,6 +41,9 @@ setwd("~/Documents/Oyster/Rcode")
 localpath = '../data/'  # Lauren's path
 
 hrpath = '../data/Newport_SSINP/alldata/'
+comboheartpath = paste0(localpath,'Newport_SSINP/combinedheart/')
+heartoutputpath = paste0(localpath,'Newport_SSINP/heart_rates/')
+
 
 #meta file with serial numbers
 metafilePath = paste0(localpath,'Newport_SSINP/metadata/')
@@ -106,35 +110,133 @@ maintenance=loadFieldMaintData(filename = (paste0(metafilePath,"lowtide_metadata
 oystercode = unique(metafile[,'Code'])
 ```
 
-```{r importHeartFiles, echo=showcode, cache=TRUE}
-#use unique() on first column. Save result as "serialnumber"
+```{r importConcatenateRawHeartFiles, echo=showcode, cache=TRUE}
+# Loop through all oysters and 
+# Ideally you only need to run this once in a while as new data come 
+# in from the field. Otherwise, use the output files from this chunk
+# in the later analysis steps.
+##################################################################
 serialnumber=unique(metafile[,1])
 oystercode = unique(metafile[,'Code'])
+options(digits.secs = 3)
 
-#Load files
-HeartDir = '~/Documents/Oyster/data/Newport_SSINP/alldata/SN150'
 
-#Pull out IR csv files from HeartDir 
-files = dir(HeartDir, full.names=TRUE, pattern = '*IR.csv')
-
-#pull HR data and put in Heart
-for (i in 1:length(files)){
-	hdr  = scan(files[i], nlines = 1, what = character(),sep = ',')
-	temp = read.table(files[i],skip = 1, header = FALSE, sep = ',', na.strings=c("","NA"))
-	# temp = temp[,-11] # remove empty column *NOTE* be careful 
-	# here, check your input files
-	colnames(temp) = hdr
-  # temp = read.csv(files[i])
-	if (i == 1) {
-		Heart = temp
-	} else if (i > 1){
-		Heart = rbind(Heart,temp)
+pb = txtProgressBar(min = 0, max = length(oystercode), style = 3)
+counter = 0
+#oystercode = 'D.E.2.1028'  # test line, for SN150
+for (oy in (oystercode) ){ 
+	counter = counter + 1
+	setTxtProgressBar(pb, counter)
+	if(exists('combineddat')) { rm(combineddat) }
+	
+	# Handle the cases where an oyster (ID'd by 4-digit value at end of oystercode) moves
+	# between positions within the same treatement, by simply looking for the matching
+	# 4-digit oyster code and ignoring the site/treatment/position codes
+	serialnumber = metafile[which(substr(metafile$Code,7,10) == substr(oy,7,10)),'SN']
+	loops = 1
+	
+	for (sn in (serialnumber)){
+		# In metadata file, figure out the start and end dates for this serial number
+		# when it was associated with this oyster code
+		startDate = metafile[which(metafile$SN == sn & 
+								substr(metafile$Code,7,10) == substr(oy,7,10)),'StartIncludeUTC']
+		endDate = metafile[which(metafile$SN == sn & 
+								substr(metafile$Code,7,10) == substr(oy,7,10)),'EndIncludeUTC']
+		rawdatapath=file.path(paste0(NewportDir,"alldata/",sn))
+		if(!file.exists(rawdatapath)) {
+			next
+		}
+		# generate list of file names
+		myfiles = dir(rawdatapath, full.names=TRUE, pattern = '*IR.csv')
+#		gapecombo=dir(path=rawdatapath, full.names = TRUE, pattern=paste0(i,"_GAPE.csv"))
+		if(length(myfiles)==0){
+			next # if there are no data files found, skip to next serial number
+		}
+		
+		# pull HR data and put in Heart
+		for (i in 1:length(myfiles)){
+			if(exists('temp')) {rm(temp)} # clear old version of temp
+			
+			hdr  = scan(myfiles[i], nlines = 1, what = character(),sep = ',', quiet = TRUE)
+			# Use the try() function to handle cases where the input file
+			# might be empty
+			try(temp <- read.table(myfiles[i],skip = 1, header = FALSE, 
+							sep = ',', na.strings=c("","NA")), silent=TRUE)
+			if (!exists('temp')){
+				next  # If the data frame temp wasn't created, skip the rest 
+						# of this iteration of the loop
+			}
+			
+			colnames(temp) = hdr
+			temp$DateTime = as.POSIXct(temp$DateTime, tz = 'UTC')
+			
+			# The original data files only had a timestamp every 240 rows
+			# at the start and end of a 240-sample period. It might be useful
+			# to fill in the intervening time values
+			# To preserve this information in csv files, you need to have
+			# set R's options to show 3 digits on time values: 
+			# options(digits.secs = 3)
+			################################################################
+			# Get all rows that have a non-NA timestamp value in them
+			goodvals = which(!is.na(temp$DateTime))
+			# Get the subset where the last digit of the row number is a 1
+			# rather than a 0, since these are the rows at the start of 
+			# each 240-sample chunk (row 1, row 241, row 481 etc.)
+			startRows = goodvals[which((goodvals %% 10)== 1)]
+			# Go through the 240 values and add an incrementing milliseconds
+			# value onto the timestamp.
+			# Add 0.125 seconds to each reading (8Hz sample rate). Very last reading
+			# is the last millisecond in 30 seconds. (29.875seconds).
+			for (k in 1:length(startRows)){
+				nextStart = startRows[k]
+				# Generate a set of 240 timestamps incrementing by 0.125sec
+				tvals = seq(temp$DateTime[nextStart], by = 0.125, length.out = 240)
+				temp$DateTime[nextStart : (nextStart+240-1)] = tvals
+			}
+			
+			if (i == 1) {
+				Heart = temp
+			} else if (i > 1){
+				Heart = rbind(Heart,temp)
+			}
+		}
+		
+		if (loops == 1){
+			combineddat = Heart
+			loops = loops + 1
+		} else if (loops > 1) {
+			combineddat = rbind(combineddat,Heart)
+		}
+	} #end of serial number looping
+	
+	if (exists('combineddat')){
+		if (nrow(combineddat) > 0){
+			Heart = combineddat # copy back over to this data frame for further use
+			# Make sure the values are all in chronological order, in case
+			# some raw files were imported out of order when an oyster switched
+			# serial numbers
+			Heart = Heart[order(Heart$DateTime),]
+			# Figure out if there's a time of death associated with this oyster code. Get all of
+			# the rows that match this oyster code and pull the contents of the timeofdeath column
+			deathrows = metafile[which(substr(metafile$Code,7,10) == substr(oy,7,10)),'timeofdeath']
+			# Check to see if any of the values in deathrows is not an NA
+			if (length(which(!is.na(deathrows))) > 0) {
+				# If we found a non-NA value in deathrows, grab it and store it in timeofdeath
+				timeofdeath = deathrows[which(!is.na(deathrows))]
+			# If there was a time of death listed, truncate the data set there
+				Heart = Heart[which(Heart$DateTime <= timeofdeath),]
+			} else {
+				# There were no non-NA values in deathrows, so set timeofdeath to NA
+				timeofdeath = NA
+			}			
+			
+			write.csv(Heart, paste0(comboheartpath, oy, "_comboheart.csv"), 
+					row.names = FALSE)
+		}
 	}
-}
-
-# Convert time stamps to POSIX
-Heart$DateTime = as.POSIXct(Heart$DateTime, tz = 'UTC')
-#attr(Heart$DateTimePST,'tzone') = 'etc/GMT+8' # Create Pacific Standard Time version
+	
+} # end of oystercode for loop 
+close(pb)
 
 ```
 
@@ -303,8 +405,380 @@ lines(y) #add smooth version in black on top of graph
 
 ``` 
 
-```{r getBPMfunction}
-getBPM = function(x,t1 = 1, sensor = 'Sensor1IR',chunklength=300, 
+```{r getBPMfunction,echo=showcode}
+# A function to convert raw heartbeat timeseries into estimates of heart rate
+# (beats per minute). This function uses the filtfilt routine from the signal
+# library and a butterworth filter. If you specify a particular frequency 
+# for the lowband (and optionally highband), it will effectively filter
+# at half that frequency. For example, if you specify a lowband value of 
+# 1/10 (0.1 = 10 Hz), you get a lowpass filter that cuts off signals above around 5Hz.
+# If you specify 1/20 (0.05 = 5Hz), the lowpass filter filters anything above
+# about 2.5Hz.
+
+#' @param x A data frame with columns DateTime and IR for sensor data
+#' @param t1 The starting index of data to be subset from x
+#' @param sensor Column name in x declaring the sensor that you want to process
+#' @param chunklength Number of samples to process, default = 240 is 30 seconds at 8Hz for BivalveBit loggers
+#' @param lowband Frequency for the lower frequency of the bandpass filter, consider values from 1/20 to 1/300
+#' @param highband Frequency for the upper frequency of the bandpass filter, consider values from 1/2 to 1/20. Set to NULL to 
+#' implement a lowpass filter only
+#' @param amplitudeThreshold Minimum peak to peak amplitude of the *filtered* heart signal
+#' @param maxBPM Maximum beats per minute estimate, higher values will be flagged in the output
+#' @param Fs Sampling interval in seconds (default 0.125 = 8Hz for BivalveBit loggers)
+#' @param BPMqualityThreshold A numeric value indicating how close two heart rate estimates must be to be considered in agreement 
+#' @param plot Logical value to show a plot or not. Default is FALSE.
+#' @param myYlims Set of fixed y-axis limits for plots
+#' 
+#' 
+#' @return A list containing 3 estimates of the beats per minute, along with
+#' values indicating how close the 3 estimates agree and whether the signal may
+#' be questionable.
+
+getBPM = function(x,t1 = 1, sensor = 'IR',chunklength=240, 
+		lowband = 1/100, 
+		highband = 1/15, 
+		amplitudeThreshold = 60,
+		maxBPM = 80,
+		Fs = 0.125,
+		BPMqualityThreshold = 4,
+		plot = FALSE,
+		myYlims = NULL)
+{
+	temp = x[t1:(t1+chunklength-1),]  #Grab the chunk of data
+	
+	# 
+	# Grab a chunk of data that's twice as long as we need
+#	temp = x[t1:(t1+(chunklength*2)),]
+	# Calculate time difference between each sample (milliseconds), should be 100
+#	diffs = diff(temp$startMillis)
+	# Identify any gaps in the data where the interval was greater than the sampling interval in milliseconds
+#	missedReads = which(diffs > (1000 * Fs))
+	
+# Check if there are any sampling gaps (missedReads)
+#	if (length(missedReads) > 0){
+#		# Add on the final row as well
+#		missedReads = c(missedReads, (nrow(temp)+1) )
+#		# Calculate gap length between any missed reads (and the final read)
+#		testgaps = diff(missedReads) 
+#		if (missedReads[1] > chunklength){
+#			# In this case, just grab the first 300 readings
+#			temp = temp[1:chunklength,]
+#		} else if (length(which(testgaps>=chunklength)) > 0){
+#			# check if any of the testgaps values are >=300 (chunklength)
+#			# Get the index in temp that is at the start of the long run
+#			tempindx = missedReads[which(testgaps >= chunklength)]+1
+#			# If a gap is > 300, grab the sample in that gap
+#			temp = temp[tempindx:(tempindx+chunklength-1),]
+#		} else if (length( which(testgaps>=chunklength) ) == 0) {
+#			# In this case there may be multiple gaps in the time chunk, 
+#			# so that there are no good contiguous chunks of 300 readings
+#			# Return a data frame with NAs
+#			temp[,sensor] = NA 
+#			
+##			tempindx = missedReads[length(missedReads)]+1
+##			temp = temp[tempindx:(tempindx+chunklength-1),]
+#			# It's also possible to end up here if you grabbed a chunk that
+#			# ran off the end of the 600 samples and returned some NAs. That
+#			# will be handled below
+#			
+#		} 
+#	} else if (length(missedReads) == 0) {
+#		# Subset down to exactly the chunk length (10Hz sample * 30 secs = 300 samples)
+#		temp = temp[1:chunklength,]
+#	}
+	
+
+	# Add milliseconds onto the timestamps
+	temp$DateTimeMS = temp$DateTime
+	diffs = diff(temp$startMillis) / 1000
+	temp$DateTimeMS[2:nrow(temp)] = temp$DateTimeMS[1] + cumsum(diffs)
+
+	
+	# Test if there are any NAs in the heart rate values, if there are not
+	# then proceed with the filtering and heart rate determination
+	if ( length( which( is.na(temp[,sensor]) ) ) == 0){
+		
+		# Detrend the heartrate readings
+		detrendedIR = pracma::detrend(temp[,sensor])	
+		# Next look at the detrended values and look for spurious low values
+		# For instance, a good heart signal might oscillate between -200 & +300
+		# in the detrended data, and a spurious value might suddenly drop to 
+		# -6000. 
+		# Calculate the standard deviation of the data set, and then find values
+		# that are more than 3 SD away from the mean (which should be ~zero in the
+		# detrended data)
+#		spuriousVals = which(abs(detrendedIR) > (3*sd(detrendedIR)) )
+
+#		if ( length(spuriousVals) > 0) {
+#			# Convert to NAs 
+#			temp[spuriousVals,sensor] = NA
+#			
+#			for (i in 1:length(spuriousVals)){
+#				indx = spuriousVals[i]  # Get the row index for this spurious value
+#				if (indx == 1) {
+#					# If the first value is spurious, replace it with a copy 
+#					# of the next value
+#					temp[indx,sensor] = temp[indx+1,sensor]
+#				} else {
+#				# Replace the spurious value with the average of the values immediately
+#				# before and after the spurious value
+##				temp[indx,sensor] = mean(c(temp[indx-1,sensor],temp[indx+1,sensor]))
+#				temp[indx,sensor] = mean(temp[(indx-2):(indx+2),sensor], na.rm=TRUE)
+#				}
+#			}
+#		}
+#		rm(spuriousVals)
+
+		
+		# With the spurious values replaced by interpolated values, re-run the 
+		# detrending routine
+#		detrendedIR = pracma::detrend(temp[,sensor])
+	} else {
+		# If there were NAs, just define detrendedIR as NA so that later 
+		# operations skip over this chunk of data
+		detrendedIR = NA
+	}
+
+	
+
+	if (length(which(is.na(detrendedIR))) == 0) {
+
+	# Define a butterworth filter
+	# Consider using the bandpass filter rather than just a lowpass filter
+	# because of the tendency for the IR heartrate signal to drift up and 
+	# down in relation to ambient light, which tends to induce low-frequency
+	# shifts that then fool the spectral analysis routines when trying to 
+	# identify the dominant frequency
+		if (!is.null(highband)) {
+			bf = signal::butter(3,W = c(lowband, highband), type = 'pass')	# bandpass filter
+		} else if (is.null(highband)){
+			bf = butter(3,W = lowband, type = 'low')  #  lowpass filter			
+		}
+
+		# Apply the filter to the detrended data chunk
+		y = filtfilt(bf, x = detrendedIR)
+		# Calculate the spectrum of the filtered data
+		myfft2 = spectrum(y, plot = FALSE)
+		# Take the peak frequency from the spectrum, divide by sampling
+		# rate to convert to cycles per second
+		mypeakfreq = myfft2$freq[which.max(myfft2$spec)] / Fs
+		# Multiply by 60 seconds to get cycles (beats) per minute
+		BPMfft = 60 * mypeakfreq
+		# Calculate amplitude of filtered signal to denote weak or noisy signals
+		amp = range(y)[2] - range(y)[1]
+		# Use function from package 'forecast', returns peak period (not freq)
+		forecastPeriod = forecast::findfrequency(y)  
+		forecastFreq = 1/forecastPeriod # convert period to frequency
+		BPMforecast = forecastFreq * 60 * (1/Fs) # convert frequency to beats per 
+		# minute, based on the fact that the sampling period is Fs, and there are
+		# 60 seconds in a minute
+
+		# Set a flag for cases where the forecast:findfrequency estimate is 
+		# extremely large, which happens when it can't find a clear heart signal
+		BPMforecastflag = ifelse(BPMforecast > maxBPM, 'FAIL','OK')
+		# Set a flag for cases where the detrended/filtered signal has a very
+		# small amplitude, signaling that there may be no good heartbeat signal 
+		WeakSignalFlag = ifelse(amp < amplitudeThreshold, 'FAIL','OK')
+		# Use pracma package to find peaks. Note that at slower heart rates
+		# this function tends to find the sub-peaks (akin to a P or T peak in a
+		# human ECG trace) rather than just the main peaks (R peaks on a human). 
+		# This happens based on what the bandpass filter lets through. 
+		pracPeaks = pracma::findpeaks(x = y, nups = 5, minpeakdistance = 10)
+		BPMprac = nrow(pracPeaks)*2
+		
+		# Calculate the difference between the estimated heart rates from the 
+		# spectrum fft routine and the forecast::findfrequency routine. A 
+		# small value indicates good agreement
+		BPMagreeQuality.fft.forecast = ceiling(abs(BPMfft - BPMforecast))
+		# Calculate difference between the forecast and pracma estimates
+		BPMagreeQuality.prac.forecast = ceiling(abs(BPMprac - BPMforecast))
+		# Calculate difference between fft and pracma estimates
+		BPMagreeQuality.prac.fft = ceiling(abs(BPMprac - BPMfft))
+		
+		if (plot){
+			## Plot the raw detrended signal
+			if (!is.null(myYlims)){
+				# Use the specified y limits
+				plot(temp$DateTimeMS, detrendedIR, type = 'l', 
+						main = '', xlab = 'Seconds', ylab = '',
+						las = 1, ylim = myYlims)	
+			} else if (is.null(myYlims)) {
+				# No y limits specified, use plot defaults
+				plot(temp$DateTimeMS, detrendedIR, type = 'l', 
+						main = '', xlab = 'Seconds', ylab = '',
+						las = 1)	
+			}
+			 
+			points(temp$DateTimeMS, detrendedIR, col = 1, pch = 20, cex = 1)
+			if (amp > amplitudeThreshold){
+				lines(temp$DateTimeMS, y, col = 3, lwd = 2) # add the filtered signal as a green line
+			} else if (amp <= amplitudeThreshold) {
+				lines(temp$DateTimeMS, y, col = 2, lwd = 2) # add the filtered signal as a red line	
+				warning('Weak signal')
+			}
+			points(temp$DateTimeMS[pracPeaks[,2]], y = pracPeaks[,1], col = 4, pch = 19)
+			mtext(side = 2, text = 'Detrended IR signal', line = 2.5, cex = 1)
+			mtext(side = 1, line = 3, text = paste(sensor, strftime(temp$DateTimePST[1])), cex = 0.8, adj = 1)
+			mtext(side = 3, line = 3, text = paste0('pracma bpm: ', BPMprac))
+			mtext(side = 3, line = 2, text = paste0('fft bpm: ', BPMfft))
+			mtext(side = 3, line = 1, text = paste0('forecast filtered bpm: ', round(BPMforecast,1)))
+			if (!is.null(highband)){
+				mtext(side = 3, line = 0.01, 
+						text = paste0('Bandpass - Lower pass: ', round(lowband,digits =3), ', upper pass: ', round(highband,digits = 3)),
+						cex = 0.8)	
+			} else if (is.null(highband)) {
+				mtext(side = 3, line = 0.01, 
+						text = paste0('Lowpass - Lower limit: ', round(lowband,digits =3)),cex = 0.8)	
+			}
+			
+			
+		}
+
+		resultsList = list(DateTime = temp$DateTime[1],
+				Sensor = sensor,
+				BPMfft = round(BPMfft,1),
+				BPMforecast = round(BPMforecast,1),
+				BPMpeaks = BPMprac,
+				BPMagreeQuality.fft.forecast = BPMagreeQuality.fft.forecast,
+				BPMagreeQuality.prac.forecast = BPMagreeQuality.prac.forecast,
+				BPMagreeQuality.prac.fft = BPMagreeQuality.prac.fft,
+				BPMforecastflag = BPMforecastflag,
+				WeakSignalFlag = WeakSignalFlag,
+				FilteredAmplitude = round(amp,1),
+				finalBPM = NA,
+				finalfilter = 1/highband,
+				QA = FALSE)
+		# If there is reasonable agreement between the 3 beats per minute estimates,
+		# record the mean of the 3 values as the finalBPM
+		if (resultsList$BPMagreeQuality.fft.forecast <= BPMqualityThreshold & 
+				resultsList$BPMagreeQuality.prac.forecast <= BPMqualityThreshold &
+				resultsList$BPMagreeQuality.prac.fft <= BPMqualityThreshold & 
+				resultsList$WeakSignalFlag == 'OK') {
+			resultsList$finalBPM = round(mean(resultsList$BPMfft,
+							resultsList$BPMforecast,
+							resultsList$BPMpeaks), digits = 1)
+		}
+	} else if (length( which( is.na(temp[,sensor]) ) ) > 0) {
+		# Handle the case where there are NAs in the data chunk that prevent
+		# the filtering and fft routines
+		resultsList = list(DateTime = temp$DateTime[1],
+				Sensor = sensor,
+				BPMfft = NA,
+				BPMforecast = NA,
+				BPMpeaks = NA,
+				BPMagreeQuality.fft.forecast = NA,
+				BPMagreeQuality.prac.forecast = NA,
+				BPMagreeQuality.prac.fft = NA,
+				BPMforecastflag = 'FAIL',
+				WeakSignalFlag = 'FAIL',
+				FilteredAmplitude = NA,
+				finalBPM = NA,
+				finalfilter = NA,
+				QA = FALSE
+				)
+	}
+	
+
+	return(resultsList)
+}
+
+```
+
+```{r cleanupRawHeartForPlotting, echo=showcode}
+# A function for grabbing a chunk of 300 samples at a given time stamp and 
+# returning the detrended raw IR data, for plotting purposes primarily. 
+
+#' @param tstamp POSIX time stamp in Pacific Standard Time zone
+#' @param rawHeartdf Data frame of raw heart rate data from multiple sensors
+#' @param mysensor Character string matching the name of the sensor column you want to extract 
+
+#rawHeartdf = surfHeart
+
+extractRawIRchunk = function(tstamp, rawHeartdf, mysensor, chunklength = 300)
+{
+	# In the "raw" data frame rawHeartdf, find the closest time stamp
+	t1 = which.min(abs(tstamp - rawHeartdf$DateTimePST))
+	# Grab the chunk of raw data. We'll assume that the timestamp should have
+	# us starting at a section of 300 contiguous reads
+	temp = rawHeartdf[t1:(t1 + (chunklength*2)),c(mysensor,'DateTimePST','startMillis')]
+	diffs = diff(temp$startMillis)
+	missedReads = which(diffs > 100)
+# Check if there are any sampling gaps (missedReads)
+	if (length(missedReads) > 0){
+		# Add on the final row as well
+		missedReads = c(missedReads, (nrow(temp)+1) )
+		# Calculate gap length between any missed reads (and the final read)
+		testgaps = diff(missedReads) 
+		if (missedReads[1] > chunklength){
+			# In this case, just grab the first 300 readings
+			temp = temp[1:chunklength,]
+		} else if (length(which(testgaps>= chunklength)) > 0){
+			# check if any of the testgaps values are >= chunklength
+			# Get the index in temp that is at the start of the long run
+			tempindx = missedReads[which(testgaps >= chunklength)] + 1
+			# If a gap is > 300, grab the sample in that gap
+			temp = temp[tempindx:(tempindx+chunklength-1),]
+		} else if (length(which(testgaps>=chunklength)) == 0) {
+			# In this case there may be multiple gaps in the time chunk, 
+			# so that there are no good contiguous chunks of 300 readings
+			# Return a data frame with NAs
+			temp[,sensor] = NA 			
+		}
+	} else if (length(missedReads) == 0) {
+		# Subset down to exactly the chunk length (10Hz sample * 30 secs = 300 samples)
+		temp = temp[1:chunklength,]
+	}
+	
+# Add milliseconds onto the timestamps
+	temp$DateTimeMS = temp$DateTimePST
+	
+	diffs = diff(temp$startMillis) / 1000
+	temp$DateTimeMS[2:nrow(temp)] = temp$DateTimeMS[1] + cumsum(diffs)
+	
+# Handle cases where single very low values appear due to spurious values
+# being recorded in the dataset. Replace with a linear interpolation of
+# of the two neighboring values. First detrend the raw values
+	detrendedIR = pracma::detrend(temp[,mysensor])
+# Next look at the detrended values and look for spurious low values
+# For instance, a good heart signal might oscillate between -200 & +300
+# in the detrended data, and a spurious value might suddenly drop to 
+# -6000. 
+# Calculate the standard deviation of the data set, and then find values
+# that are more than 3 SD away from the mean (which should be ~zero in the
+# detrended data)
+	spuriousVals = which(abs(detrendedIR) > (3*sd(detrendedIR)) )
+	
+	if ( length(spuriousVals) > 0) {
+		# Convert to NAs 
+		temp[spuriousVals,mysensor] = NA
+		
+		for (i in 1:length(spuriousVals)){
+			indx = spuriousVals[i]  # Get the row index for this spurious value
+			# Replace the spurious value with the average of the values immediately
+			# before and after the spurious value
+#				temp[indx,sensor] = mean(c(temp[indx-1,sensor],temp[indx+1,sensor]))
+			temp[indx,mysensor] = mean(temp[(indx-2):(indx+2),mysensor], na.rm=TRUE)
+		}
+	}
+	rm(spuriousVals)
+# With the spurious values replaced by interpolated values, re-run the 
+# detrending routine
+	detrendedIR = pracma::detrend(temp[,mysensor])
+	# Return just the vector of detrended IR data
+	detrendedIR
+}
+
+```
+
+
+
+
+
+
+
+
+```{r getBPMfunctionOldVersion}
+getBPMold = function(x,t1 = 1, sensor = 'Sensor1IR',chunklength=300, 
 		lowband = 1/60, 
 		highband = 1/10, 
 		#amplitudeThreshold = 60,
@@ -591,247 +1065,374 @@ mtext(side = 2, text = 'Detrended IR signal', line = 4, cex = mycex)
 
 ```
 
-```{r processheartrates,echo=showcode, eval = evalAll}
-# Go through the different sensors in the raw surfHeart data frame and 
-# calculate beats per minute estimates. The resulting data will be
-# written to a csv file for faster reloading in the future. This 
-# routine takes about 1.5hr for all 8 sensors to process. 
-
+## Filter heart rates from data logger
+```{r AutoProcessHeartrates, echo=showcode, eval=evalAll}
+# Go through the data files for a particular sensor and try to automatically
+# estimate the heart rate
+ 
 # Step through 1 minute at a time
-mytime = as.POSIXct('2022-07-28 00:30:00',tz='etc/GMT+8')
+#mytime = as.POSIXct('2020-12-22 12:00',tz='etc/GMT+8')
 
-timesteps = seq(Heart$DateTimePST[1],Heart$DateTimePST[nrow(Heart)],by = 60)
+# TODO wrap the code below in a control structure that will let you specify
+# an oyster code and then process that oyster's raw IR data
+options(digits.secs = 3) # used to preserve milliseconds values in time stamps
 
-pb = txtProgressBar(min = 0, max = length(timesteps), style = 3)
+oy = 'D.E.2.1028'
 
-# Sensor1
-for (i in 1:length(timesteps)){
+Heart = read.csv(paste0(comboheartpath,oy,'_comboheart.csv'))
+Heart$DateTime = as.POSIXct(Heart$DateTime, tz = 'UTC')
+
+
+# Figure out where the start of each 30-second sampling bout should be. 
+# The sampling bouts were typically separated by 5 minutes, so we'll just
+# look for any time gap that's bigger than 60 seconds. 
+steps = diff(Heart$DateTime)
+bigsteps = which(steps > 60)
+bigsteps = bigsteps+1
+bigsteps = c(1,bigsteps) # A set of row indices in Heart for each new sample period
+
+pb = txtProgressBar(min = 0, max = length(bigsteps), style = 3)
+
+mylowband = 1/100  # filtering 
+myhighband = 1/15  # filtering - changing this has the largest effect, start around 1/15
+myThreshold = 4 # Minimum agreement between BPM estimates
+
+for (i in 1:length(bigsteps)){
 	setTxtProgressBar(pb,i)
-	t1 = which.min(abs(Heart$DateTimePST - timesteps[i]))
+#	t1 = which.min(abs(Heart$DateTime - bigsteps[i]))
 	# Test that we've hit the chosen minute (not just the closest time)
-	if (difftime(timesteps[i],Heart$DateTimePST[t1], units = 'secs') == 0){
+#	if (difftime(bigsteps[i],Heart$DateTime[t1], units = 'secs') == 0){
 		
-		# Sensor 1
-		res1 = getBPM(Heart,t1 = t1, sensor = 'Sensor1IR')
-		if (i == 1) {
-			Sensor1Result = as.data.frame(res1)
-			Sensor1Result[2:length(timesteps),] = NA
-		} else {
-			Sensor1Result[i,] = as.data.frame(res1)
-		}
-		
-		# Sensor 2
-		res2 = getBPM(Heart,t1 = t1, sensor = 'Sensor2IR')
+		res1 = getBPM(Heart, t1 = bigsteps[i], sensor = 'IR', chunklength = 240,
+				lowband = mylowband, highband = myhighband, amplitudeThreshold = 20,
+				BPMqualityThreshold = myThreshold,
+				maxBPM = 80, Fs = 0.125, plot = FALSE)
 		if (i == 1) {			
-			Sensor2Result = as.data.frame(res2)
-			Sensor2Result[2:length(timesteps),] = NA
+			SensorResult = as.data.frame(res1)
+			SensorResult[2:length(bigsteps),] = NA
 		} else {
-			Sensor2Result[i,] = as.data.frame(res2)
+			SensorResult[i,] = as.data.frame(res1)
 		}
 		
-		# Sensor 3
-		res3 = getBPM(Heart,t1 = t1, sensor = 'Sensor3IR')
-		if (i == 1) {			
-			Sensor3Result = as.data.frame(res3)
-			Sensor3Result[2:length(timesteps),] = NA
-		} else {
-			Sensor3Result[i,] = as.data.frame(res3)
-		}
-		
-		# Sensor 4
-		res4 = getBPM(Heart,t1 = t1, sensor = 'Sensor4IR')
-		if (i == 1) {			
-			Sensor4Result = as.data.frame(res4)
-			Sensor4Result[2:length(timesteps),] = NA
-		} else {
-			Sensor4Result[i,] = as.data.frame(res4)
-		}
-		
-		# Sensor 5
-		res5 = getBPM(surfHeart,t1 = t1, sensor = 'Sensor5IR')
-		if (i == 1) {			
-			Sensor5Result = as.data.frame(res5)
-			Sensor5Result[2:length(timesteps),] = NA
-		} else {
-			Sensor5Result[i,] = as.data.frame(res5)
-		}
-		
-		# Sensor 6
-		res6 = getBPM(surfHeart,t1 = t1, sensor = 'Sensor6IR')
-		if (i == 1) {			
-			Sensor6Result = as.data.frame(res6)
-			Sensor6Result[2:length(timesteps),] = NA
-		} else {
-			Sensor6Result[i,] = as.data.frame(res6)
-		}
-		
-		# Sensor 7
-		res7 = getBPM(surfHeart,t1 = t1, sensor = 'Sensor7IR')
-		if (i == 1) {			
-			Sensor7Result = as.data.frame(res7)
-			Sensor7Result[2:length(timesteps),] = NA
-		} else {
-			Sensor7Result[i,] = as.data.frame(res7)
-		}
-		
-	} else {
-		Sensor1Result$DateTimePST[i] = timesteps[i]
-		Sensor2Result$DateTimePST[i] = timesteps[i]
-		Sensor3Result$DateTimePST[i] = timesteps[i]
-		Sensor4Result$DateTimePST[i] = timesteps[i]
-		Sensor5Result$DateTimePST[i] = timesteps[i]
-		Sensor6Result$DateTimePST[i] = timesteps[i]
-		Sensor7Result$DateTimePST[i] = timesteps[i]
-	}	
-}
 
-
-Sensor1Result$Species = 'Mgallo'
-Sensor1Result$Treatment = 'Surface'
-Sensor2Result$Species = 'Mgallo'
-Sensor2Result$Treatment = 'Surface'
-Sensor3Result$Species = 'Mgallo'
-Sensor3Result$Treatment = 'Surface'
-Sensor4Result$Species = 'Mgallo'
-Sensor4Result$Treatment = 'Surface'
-Sensor5Result$Species = 'Mgallo'
-Sensor5Result$Treatment = 'Surface'
-Sensor6Result$Species = 'Cgigas'
-Sensor6Result$Treatment = 'Surface'
-Sensor7Result$Species = 'Cgigas'
-Sensor7Result$Treatment = 'Surface'
-
-close(pb)
-
-
-surfHeartbpm = rbind(Sensor1Result,Sensor2Result,Sensor3Result,Sensor4Result,
-		Sensor5Result,Sensor6Result,Sensor7Result)
-#surfHeartbpm = rbind(surfHeartS1,surfHeartS2,surfHeartS3,surfHeartS4,surfHeartS5,surfHeartS6,surfHeartS7)
-
-write.csv(surfHeartbpm,
-		file = paste0(outputDirCSVs,'SurfaceHeart_SN04_bpm.csv'),
-		row.names=FALSE)
-
-
-rm(Sensor1Result,Sensor2Result,Sensor3Result,Sensor4Result,
-		Sensor5Result,Sensor6Result,Sensor7Result)
-
-
-# Go through the different sensors in the raw bottomHeart data frame and 
-# calculate beats per minute estimates. The resulting data will be
-# written to a csv file for faster reloading in the future. 
-
-# Step through 1 minute at a time
-mytime = as.POSIXct('2020-12-22 12:00',tz='etc/GMT+8')
-
-timesteps = seq(botHeart$DateTimePST[1],botHeart$DateTimePST[nrow(botHeart)],by = 60)
-
-pb = txtProgressBar(min = 0, max = length(timesteps), style = 3)
-
-# Sensor1
-for (i in 1:length(timesteps)){
-	setTxtProgressBar(pb,i)
-	t1 = which.min(abs(botHeart$DateTimePST - timesteps[i]))
-	# Test that we've hit the chosen minute (not just the closest time)
-	if (difftime(timesteps[i],botHeart$DateTimePST[t1], units = 'secs') == 0){
-		
-		# Sensor 1
-		res1 = getBPM(botHeart,t1 = t1, sensor = 'Sensor1IR')
-		if (i == 1) {			
-			Sensor1Result = as.data.frame(res1)
-			Sensor1Result[2:length(timesteps),] = NA
-		} else {
-			Sensor1Result[i,] = as.data.frame(res1)
-		}
-		
-		# Sensor 2
-		res2 = getBPM(botHeart,t1 = t1, sensor = 'Sensor2IR')
-		if (i == 1) {			
-			Sensor2Result = as.data.frame(res2)
-			Sensor2Result[2:length(timesteps),] = NA
-		} else {
-			Sensor2Result[i,] = as.data.frame(res2)
-		}
-		
-		# Sensor 3
-		res3 = getBPM(botHeart,t1 = t1, sensor = 'Sensor3IR')
-		if (i == 1) {			
-			Sensor3Result = as.data.frame(res3)
-			Sensor3Result[2:length(timesteps),] = NA
-		} else {
-			Sensor3Result[i,] = as.data.frame(res3)
-		}
-		
-		# Sensor 4
-		res4 = getBPM(botHeart,t1 = t1, sensor = 'Sensor4IR')
-		if (i == 1) {			
-			Sensor4Result = as.data.frame(res4)
-			Sensor4Result[2:length(timesteps),] = NA
-		} else {
-			Sensor4Result[i,] = as.data.frame(res4)
-		}
-		
-		# Sensor 5
-		res5 = getBPM(botHeart,t1 = t1, sensor = 'Sensor5IR')
-		if (i == 1) {			
-			Sensor5Result = as.data.frame(res5)
-			Sensor5Result[2:length(timesteps),] = NA
-		} else {
-			Sensor5Result[i,] = as.data.frame(res5)
-		}
-		
-		# Sensor 6
-		res6 = getBPM(botHeart,t1 = t1, sensor = 'Sensor6IR')
-		if (i == 1) {			
-			Sensor6Result = as.data.frame(res6)
-			Sensor6Result[2:length(timesteps),] = NA
-		} else {
-			Sensor6Result[i,] = as.data.frame(res6)
-		}
-		
-		# Sensor 7
-		res7 = getBPM(botHeart,t1 = t1, sensor = 'Sensor7IR')
-		if (i == 1) {			
-			Sensor7Result = as.data.frame(res7)
-			Sensor7Result[2:length(timesteps),] = NA
-		} else {
-			Sensor7Result[i,] = as.data.frame(res7)
-		}
-		
-	} else {
-		Sensor1Result$DateTimePST[i] = timesteps[i]
-		Sensor2Result$DateTimePST[i] = timesteps[i]
-		Sensor3Result$DateTimePST[i] = timesteps[i]
-		Sensor4Result$DateTimePST[i] = timesteps[i]
-		Sensor5Result$DateTimePST[i] = timesteps[i]
-		Sensor6Result$DateTimePST[i] = timesteps[i]
-		Sensor7Result$DateTimePST[i] = timesteps[i]
-	}
+#	} else {
+#		SensorResult$DateTime[i] = timesteps[i]
+#
+#	}
 }
 close(pb)
+# Add a column with the oyster code
+SensorResult$OysterCode = oy 
 
-Sensor1Result$Species = 'Cgigas'  # Channels 1 + 2 were oysters on the bottom 
-Sensor1Result$Treatment = 'Bottom'
-Sensor2Result$Species = 'Cgigas'
-Sensor2Result$Treatment = 'Bottom'
-Sensor3Result$Species = 'Mgallo'
-Sensor3Result$Treatment = 'Bottom'
-Sensor4Result$Species = 'Mgallo'
-Sensor4Result$Treatment = 'Bottom'
-Sensor5Result$Species = 'Mgallo'
-Sensor5Result$Treatment = 'Bottom'
-Sensor6Result$Species = 'Mgallo'
-Sensor6Result$Treatment = 'Bottom'
-Sensor7Result$Species = 'Mgallo'
-Sensor7Result$Treatment = 'Bottom'
 
-botHeartbpm = rbind(Sensor1Result,Sensor2Result,Sensor3Result,Sensor4Result,
-		Sensor5Result,Sensor6Result,Sensor7Result)
 # Save an output file for faster loading in next chunks
-write.csv(botHeartbpm,
-		file = paste0(outputDirCSVs,'BottomHeart_SN05_bpm.csv'),
+write.csv(SensorResult,
+		file = paste0(heartoutputpath,oy,'_bpm.csv'),  
 		row.names=FALSE)
 ```
+
+```{r interactivePlotFunctions}
+####################################################################################
+# Creating basic interactive graphing routines that allow a user to press a
+# particular key to create some response
+
+# 2 functions to allow user interaction with a graph
+readkeygraph <- function(prompt)
+{
+	getGraphicsEvent(prompt = prompt, 
+			onMouseDown = NULL, onMouseMove = NULL,
+			onMouseUp = NULL, onKeybd = onKeybd,
+			consolePrompt = "Enter a key:\npress n = next (enters NAs) \nk = keep current values \nr = refilter \nl = less filtering \np = use pracma bpm \nf = use forecast bpm \nb = step back to previous time \nq to quit")
+	Sys.sleep(0.01)
+	return(keyPressed)
+}
+
+onKeybd <- function(key)
+{
+	keyPressed <<- key
+}
+# End of function definitions
+
+```
+
+
+```{r QAvisualInspectionSetup, echo=showcode, eval = evalAll}
+# Go through the results lists and visually inspect timepoints where the
+# heart rate was flagged as questionable. This may be a one-time thing. Run the
+# code in this chunk to open the BPM data and extract the data for your 
+# desired sensor channel ('mysensor'). Then run the code in the next chunk
+# to do the manual inspection. You may save your progress at the end of the
+# next chunk (manually) so that it will be available here the next time you
+# reopen the data file. 
+
+mysensor = 'IR'
+
+oy = 'D.E.2.1028'
+
+# Open up the concatenated heart data for this oyster
+Heart = read.csv(paste0(comboheartpath,oy,'_comboheart.csv'))
+Heart$DateTime = as.POSIXct(Heart$DateTime, tz = 'UTC')
+
+# Open up the output file from the heart rate auto-processing routine
+if (length(dir(path = heartoutputpath, 
+				pattern = paste0(oy,'[[:alnum:][:punct:]]*QA.csv'))) == 1){
+	# If the QA'd version exists already, load that up
+	Heartbpm = read.csv(paste0(heartoutputpath, oy,'_bpm_QA.csv'))
+} else {
+	# Reopen the original filtered results file, which hasn't had QA started yet
+	Heartbpm = read.csv(paste0(heartoutputpath,oy,'_bpm.csv'))	
+}
+
+
+# Convert DateTime to POSIX
+Heartbpm$DateTime = as.POSIXct(Heartbpm$DateTime, tz = 'UTC')
+# The heart beat estimates and quality flags are stored in Heartbpm
+
+
+# Define a BPM quality threshold. The BPM estimates from the various methods should 
+# be less than this value, meaning they are in close agreement. 
+BPMqualityThreshold = 4
+
+# Figure out rows where there's disagreement among the 3 methods and also values haven't
+# previously been QA'd. If the row already has been QA'd, this will ignore that row. 
+# This will pull out any row where the disagreement
+# between 2 of the methods is greater than the BPMqualityThreshold
+# and the sensor hasn't been QA'd. This will catch rows with 
+# weak signals though, which may be too many.
+ checkTheseRows = which( (Heartbpm$BPMagreeQuality.fft.forecast > BPMqualityThreshold | 
+ 				Heartbpm$BPMagreeQuality.prac.forecast > BPMqualityThreshold | 
+ 				Heartbpm$BPMagreeQuality.prac.fft > BPMqualityThreshold ) & 
+ 			Heartbpm$QA == 'FALSE')
+
+# This version requires the WeakSignalFlag field to be OK instead
+# of FAIL. Useful in cases where large numbers (thousands) of 
+# rows would be caught here, but most of them have such a weak signal
+# that they're not even worth looking at. 
+#checkTheseRows = which( (sensor$BPMagreeQuality.fft.forecast > BPMqualityThreshold | 
+#				sensor$BPMagreeQuality.prac.forecast > BPMqualityThreshold | 
+#				sensor$BPMagreeQuality.prac.fft > BPMqualityThreshold ) & 
+#			sensor$QA == 'FALSE' &
+#			  sensor$WeakSignalFlag == 'OK')
+# Also get the rows with NAs
+NArows = which(is.na(Heartbpm$BPMfft) & is.na(Heartbpm$BPMforecast))
+# Combine the two sets of bad row indices
+badRows = c(checkTheseRows,NArows)
+
+counter = 1 # Start at the first entry in checkTheseRows
+
+if (exists('ManualStart')){
+	# This won't run automatically, but you can use it to find a starting point in the middle 
+	# of the dataset to start at, if you don't want to start at the first entry
+	myTime = as.POSIXct('2022-08-22 10:52:30', tz = 'etc/GMT+8')
+	counter = which.min(abs(myTime - Heartbpm$DateTime[checkTheseRows]))
+}
+
+```
+
+
+```{r QAmanualVisualInspection,echo=showcode,eval=evalAll}
+# On a Mac in Rstudio, before you run this chunk, run the following on the command line:
+# X11(type='Xlib')
+# On a Windows machine in Rstudio, you may instead need to run this line:
+# dev.new()
+# The goal is to open a plotting window outside of Rstudio that can accept user input
+
+# The value 'counter' should be defined in the previous chunk
+
+quitFlag = FALSE
+skipFlag = FALSE
+ylims = c(-50,50)
+amplitudeThresh = 10
+chunkLen = 240
+myFs = 0.125
+
+# You should have 
+sensor = Heartbpm  # make a copy of the original data to work on
+
+
+while (!quitFlag){
+	# Get the row index of the next questionable row
+	thisrow = checkTheseRows[counter]
+	
+	# Get the time stamp of the current row
+	tstamp = sensor$DateTime[thisrow]
+	
+	t1 = which.min(abs(tstamp - Heart$DateTime))
+	# Also get the rows for the sample periods before and after the target minute
+	t0 = which.min(abs( (tstamp-300) - Heart$DateTime))
+	t2 = which.min(abs( (tstamp+240) - Heart$DateTime))
+	HighBandDenom = 15  # Initial value should be 15 to make a 1/15 highband cutoff
+	# Make the first version of the plot
+	op = par()
+	par(mfcol = c(1,3), mar = c(5,5,5,1))
+	# Plot the prior minute's data for context
+	junk = getBPM(Heart,t1 = t0, sensor = mysensor, chunklength = chunkLen,
+			lowband = 1/100, highband = 1/15, amplitudeThreshold = amplitudeThresh,
+			maxBPM = 50, Fs = myFs, plot = TRUE, myYlims = ylims)
+	if (is.na(junk$BPMfft) & is.na(junk$BPMforecast) & is.na(junk$BPMpeaks)){
+		# If all of these were NA, there's nothing to plot
+		plot.new()
+		box()
+		text(x=0.5,y=0.5, labels = 'No good data')
+	} 
+	# Plot the one we're interested in
+	res1 = getBPM(Heart,t1 = t1, sensor = mysensor, chunklength = chunkLen,
+			lowband = 1/100, highband = 1/HighBandDenom, amplitudeThreshold = amplitudeThresh,
+			maxBPM = 50, Fs = myFs, plot = TRUE, myYlims = ylims)
+	# Sanity check, if nothing gets plotted then we need to skip
+	if (is.na(res1$BPMfft) & is.na(res1$BPMforecast) & is.na(res1$BPMpeaks)){
+		# If all of these were NA, there's nothing to plot
+		plot.new()
+		box()
+		text(x=0.5,y=0.5, labels = 'No good data')
+		skipFlag = TRUE
+	} 
+	mtext(side = 1, text = paste0(counter,'/',length(checkTheseRows)), adj = 0, line = 2.5)
+	# Plot the next minute's data as well, just for context
+	junk = getBPM(Heart,t1 = t2, sensor = mysensor, chunklength = chunkLen,
+			lowband = 1/100, highband = 1/15, amplitudeThreshold = amplitudeThresh,
+			maxBPM = 50, Fs = myFs, plot = TRUE, myYlims = ylims)
+	if (is.na(junk$BPMfft) & is.na(junk$BPMforecast) & is.na(junk$BPMpeaks)){
+		# If all of these were NA, there's nothing to plot
+		plot.new()
+		box()
+		text(x=0.5,y=0.5, labels = 'No good data')
+	} 
+	
+	keyPressed = '' # initialize this so that it exists
+	while (keyPressed != 'q'){
+		# First, if the data for the desired time had too many missing values
+	  # and skipFlag is true, handle that case and skip over this time point
+		if (skipFlag){
+			skipFlag = FALSE
+			next
+		}
+		
+		# Use the readkeygraph() function to prompt the user for input on the graph
+		keyPressed = readkeygraph(prompt = "Enter a key: n = next (enters NAs), k = keep [average] 3 BPM values, r = refilter, l = less filtering, p = use pracma bpm, f = use fft bpm, b = step back to previous time, 0 = flatline signal, s = save and quit, q = quit without saving")
+		keyPressed # print the resulting key press, this will be a character value
+		# At this point interpret the resulting key press and cause some
+		# decision to be made 
+		if (keyPressed == 'n'){
+			# User typed n, set the BPM values and flags to NA, this chunk isn't usable
+			sensor[thisrow,3:8] = NA
+			sensor$finalBPM[thisrow] = NA
+			sensor$QA[thisrow] = TRUE
+			keyPressed = 'q' # break out of the while loop
+		} else if (keyPressed == 'k') {
+			# User typed k, keep the current values and calculate a final BPM value
+			sensor$finalBPM[thisrow] = round(mean(res1$BPMfft, res1$BPMforecast,res1$BPMpeaks),1)
+			sensor$QA[thisrow] = TRUE
+			# Store the final highband filter value used as well
+			sensor$finalfilter[thisrow] = 1/HighBandDenom
+			keyPressed = 'q'  # Set to q to quit this round of the while loop
+		} else if (keyPressed == 'r') {
+			# Refilter more aggressively
+			HighBandDenom = HighBandDenom + 5 
+			junk = getBPM(Heart,t1 = t0, sensor = mysensor, chunklength = chunkLen,
+					lowband = 1/100, highband = 1/15, amplitudeThreshold = amplitudeThresh,
+					maxBPM = 80, Fs = myFs, plot = TRUE, myYlims = ylims)
+			res1 = getBPM(Heart,t1 = t1, sensor = mysensor, chunklength = chunkLen,
+					lowband = 1/100, highband = 1/HighBandDenom, amplitudeThreshold = amplitudeThresh,
+					maxBPM = 80, Fs = myFs, plot = TRUE, myYlims = ylims)
+			junk = getBPM(Heart,t1 = t2, sensor = mysensor, chunklength = chunkLen,
+					lowband = 1/100, highband = 1/15, amplitudeThreshold = amplitudeThresh,
+					maxBPM = 80, Fs = myFs, plot = TRUE, myYlims = ylims)
+			keypressed = ''
+			# now we return to the top of the while loop
+		} else if (keyPressed == 'l') {
+			# Filter less aggressively
+		  if (HighBandDenom > 5){
+		    	HighBandDenom = HighBandDenom - 5
+		  } else if (HighBandDenom <= 5 & HighBandDenom > 3) {
+		     HighBandDenom = HighBandDenom - 1
+		  } else if (HighBandDenom <= 3){
+		    HighBandDenom = 3
+		  }
+
+			junk = getBPM(Heart,t1 = t0, sensor = mysensor, chunklength = chunkLen,
+					lowband = 1/100, highband = 1/15, amplitudeThreshold = amplitudeThresh,
+					maxBPM = 50, Fs = myFs, plot = TRUE, myYlims = ylims)
+			res1 = getBPM(Heart,t1 = t1, sensor = mysensor, chunklength = chunkLen,
+					lowband = 1/100, highband = 1/HighBandDenom, amplitudeThreshold = amplitudeThresh,
+					maxBPM = 50, Fs = myFs, plot = TRUE, myYlims = ylims)
+			junk = getBPM(Heart,t1 = t2, sensor = mysensor, chunklength = chunkLen,
+					lowband = 1/100, highband = 1/15, amplitudeThreshold = amplitudeThresh,
+					maxBPM = 50, Fs = myFs, plot = TRUE, myYlims = ylims)
+			keypressed = ''
+			# Now we return to the top of the while loop
+		} else if (keyPressed == 'p') {
+			# User wants to assign the pracma-derived BPM value as the finalBPM
+			sensor$finalBPM[thisrow] = res1$BPMpeaks
+			# Store the final highband filter value used as well
+			sensor$finalfilter[thisrow] = 1/HighBandDenom
+			sensor$QA[thisrow] = TRUE
+			keyPressed = 'q' # set this to move on to next time point
+		} else if (keyPressed == 'f') {
+			# User wants to use the fft-derived BPM value as the finalBPM
+			sensor$finalBPM[thisrow] = res1$BPMfft
+			# Store the final highband filter value used as well
+			sensor$finalfilter[thisrow] = 1/HighBandDenom	
+			sensor$QA[thisrow] = TRUE
+			keyPressed = 'q' # set this to move to next time point
+		} else if (keyPressed == 'b') {
+			# User wants to go back to the previous plot, maybe they want to do that
+			# one over again.
+			counter = counter - 2 # Decrement by 2, because the end of the loop will increment by 1 again
+			keyPressed = 'q' # Set to q to exit while loop			
+		} else if (keyPressed == 'q'){
+			quitFlag = TRUE # Set TRUE to exit outer while loop
+		} else if (keyPressed == 's') {
+			# Write the updated data back into the main data frame
+			surfHeartbpm[which(surfHeartbpm$Sensor == mysensor),] = sensor
+			# Save the data frame to a csv file
+			write.csv(Heartbpm, file = paste0(heartoutputpath,oy,'_bpm_QA.csv'), 
+					row.names=FALSE)
+			# User wants to save progress and quit
+			keyPressed = 'q' # Set to q to exit while loop
+			quitFlag = TRUE # Set TRUE to exit outer while loop
+		} else if (keyPressed == '0'){
+		  sensor$finalBPM[thisrow] = 0
+		  sensor$finalfilter[thisrow] = 1/HighBandDenom
+		  sensor$QA = TRUE
+		  keyPressed = 'q' # Set to q to exit while loop
+		} else {
+			# Key pressed wasn't one of the choices above, so do some default action
+			mtext(side = 3, line = -2, text = "No sensible choice made")
+		}
+	}
+	keyPressed = '' # reset the value
+	counter = counter+1 # increment the counter
+	if(counter > length(checkTheseRows)){
+	  quitFlag = TRUE
+	}
+	par(op)
+	
+	
+}
+
+print(paste('Last row checked: ', checkTheseRows[i], ' time: ', sensor$DateTime[thisrow]))
+
+# At the end of the loop, the 'sensor' data frame should have the 'finalBPM' values
+# assigned in most rows (besides rows with bad data)
+	
+
+# userInput = readline(prompt = "Save progress? y or n: \n")
+userInput = askYesNo(msg = "Save progress? y or n: \n")
+
+if(userInput){
+	# Write the updated data back into the main data frame
+	Heartbpm = sensor
+	# Save the data frame to a csv file
+	write.csv(Heartbpm, file = paste0(heartoutputpath,oy,'_bpm_QA.csv'), 
+			row.names=FALSE)
+} else {
+  print("Updates not saved.")
+}
+
+```
+
+
 
 ```{r openHeartBPM,echo=showcode}
 # Open the re-processed beats per minute estimates from surface board
@@ -927,382 +1528,3 @@ loessFunc = function(x,y, col = 1, lwd = 2, pch = '.', cex = 1, span = 0.75){
 #}
 
 ```
-
-```{r surfacePlotsTJ2020-2021-1, echo=showcode, dev='png',fig.width=8,fig.height=5,res=300, fig.cap="Data for 5 surface M. galloprovincialis"}
-
-par(mar = c(5,5.5,1,2))
-mypch = '.'
-mycex = 1.5
-myspan = 0.04  # Adjust sensitivity of the loess smoother
-surfHeartS7subset = subset(surfHeartS7, BPMagreeQuality < 2, na.action='na.omit')
-plot(BPMfft~DateTimePST,
-		data = surfHeartS7subset, 
-		col = 1, pch = mypch, type = 'n', las = 1, cex = mycex,
-		ylim = c(0,35), 
-		xlab = 'Date',
-		ylab = 'Heart rate (bpm)',
-		xaxs = 'i',
-		cex.axis = mycex,
-		cex.lab = mycex)
-
-
-# Mussels at surface
-surfHeartS1subset = subset(surfHeartS1, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = surfHeartS1subset$DateTimePST, y = surfHeartS1subset$BPMfft, 
-		col = 7,cex=mycex, span = myspan)
-
-surfHeartS2subset = subset(surfHeartS2, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = surfHeartS2subset$DateTimePST, y = surfHeartS2subset$BPMfft, 
-		col = 6,cex=mycex, span = myspan)
-
-surfHeartS3subset = subset(surfHeartS3, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = surfHeartS3subset$DateTimePST, y = surfHeartS3subset$BPMfft, 
-		col = 5,cex=mycex, span = myspan)
-
-surfHeartS4subset = subset(surfHeartS4, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = surfHeartS4subset$DateTimePST, y = surfHeartS4subset$BPMfft, 
-		col = 4,cex=mycex, span = myspan)
-
-surfHeartS5subset = subset(surfHeartS5, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = surfHeartS5subset$DateTimePST, y = surfHeartS5subset$BPMfft, 
-		col = 3,cex=mycex, span = myspan)
-
-# Oysters at surface
-#loessFunc(x = surfHeartS7subset$DateTimePST, 
-#		y = surfHeartS7subset$BPMfft, col = 1, cex = mycex, span = myspan)
-#
-#surfHeartS6subset = subset(surfHeartS6, BPMagreeQuality < 2, na.action='na.omit')
-#loessFunc(x = surfHeartS6subset$DateTimePST, y = surfHeartS6subset$BPMfft, 
-#		col = 2, cex =mycex, span = myspan)
-
-
-
-```
-
-```{r bottomPlotsTJ2020-2021-1, echo=showcode, dev='png',fig.width=8,fig.height=5,res=300, fig.cap="Data for 5 M. galloprovincialis mussels at the bottom mooring"}
-
-par(mar = c(5,5.5,1,2))
-mypch = '.'
-mycex = 1.5
-myspan = 0.04 # Adjust sensitivity of the loess smoother
-botHeartS7subset = subset(botHeartS7, BPMagreeQuality < 2, na.action='na.omit')
-plot(BPMfft~DateTimePST,
-		data = botHeartS7subset, 
-		col = 1, pch = mypch, type = 'n', las = 1, cex = mycex,
-		ylim = c(0,35), 
-		xlab = 'Date',
-		ylab = 'Heart rate (bpm)',
-		xaxs = 'i',
-		cex.axis = mycex,
-		cex.lab = mycex)
-
-
-# Oysters at bottom
-
-#botHeartS1subset = subset(botHeartS1, BPMagreeQuality < 2, na.action='na.omit')
-#loessFunc(x = botHeartS1subset$DateTimePST, y = botHeartS1subset$BPMfft, 
-#		col = 7,cex=mycex, span = myspan)
-#
-#botHeartS2subset = subset(botHeartS2, BPMagreeQuality < 2, na.action='na.omit')
-#loessFunc(x = botHeartS2subset$DateTimePST, y = botHeartS2subset$BPMfft, 
-#		col = 6,cex=mycex, span = myspan)
-
-# Mussels at bottom
-botHeartS3subset = subset(botHeartS3, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = botHeartS3subset$DateTimePST, y = botHeartS3subset$BPMfft, 
-		col = 5,cex=mycex, span = myspan)
-
-botHeartS4subset = subset(botHeartS4, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = botHeartS4subset$DateTimePST, y = botHeartS4subset$BPMfft, 
-		col = 4,cex=mycex, span = myspan)
-
-botHeartS5subset = subset(botHeartS5, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = botHeartS5subset$DateTimePST, y = botHeartS5subset$BPMfft, 
-		col = 3,cex=mycex, span = myspan)
-
-botHeartS7subset = subset(botHeartS7, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = botHeartS7subset$DateTimePST, 
-		y = botHeartS7subset$BPMfft, col = 1, cex = mycex, span = myspan)
-
-botHeartS6subset = subset(botHeartS6, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = botHeartS6subset$DateTimePST, y = botHeartS6subset$BPMfft, 
-		col = 2, cex =mycex, span = myspan)
-
-
-
-```
-
-```{r loadSWMPdata,echo=showcode}
-
-swmp = read.csv(paste0(SWMPdir,'TJRBRWQ_water_quality_data_20201222-20210103.csv'))
-swmp$DateTimeStamp = as.POSIXct(swmp$DateTimeStamp,format='%m/%d/%Y %H:%M',
-		tz = 'etc/GMT+8')
-
-mytimeend = as.POSIXct('2021-01-02 03:00', tz = 'etc/GMT+8')
-mytimestart = as.POSIXct('2020-12-22 08:00', tz = 'etc/GMT+8')
-swmp = swmp[which(swmp$DateTimeStamp > mytimestart),]
-swmp = swmp[which(swmp$DateTimeStamp < mytimeend),]
-
-```
-
-```{r SWMPplot, echo=showcode, dev = 'png',fig.width=10.5,fig.height=7,res=300}
-
-#Panel the graphs
-layout(matrix(c(1,2,3,4,5,6), nrow = 6, ncol = 1),
-		heights = lcm(c(2.25,2.5,2.5,2.5,3.25,3.25)),respect=TRUE)
-par(mar = c(0,6.5,0,1))
-mylwd = 2
-mycex = 1.25
-vgrids = as.POSIXct(c('2020-12-24 00:00','2020-12-26 00:00','2020-12-28 00:00',
-				'2020-12-30 00:00', '2021-01-01 00:00'), tz = 'etc/GMT+8')
-
-
-plot(swmp$DateTimeStamp, swmp$Level, cex.lab = mycex,
-		type = 'l', las = 1, col = 4, xaxs = 'i',
-		ylab = 'Depth (m)',
-		xaxt = 'n',
-		lwd = mylwd, xlim = c(mytimestart, mytimeend))
-abline(v = vgrids, lty = 3, col = 'grey50')
-
-#plot.new()
-par(mar = c(0,6.5,0.5,1))
-plot(swmp$DateTimeStamp,swmp$Temp,
-		cex.lab = mycex, type = 'l', las = 1, col = 2,xaxs = 'i',
-		ylab = 'Temp (C)',
-		xaxt = 'n',
-		lwd = mylwd, xlim = c(mytimestart, mytimeend))
-abline(v = vgrids, lty = 3, col = 'grey50')
-plot(swmp$DateTimeStamp, swmp$Turb, cex.lab = mycex,
-		type = 'l', las = 1, col = 'brown', xaxs = 'i',
-		ylab = 'Turbidity (NTU)', 
-		xaxt = 'n',
-		lwd = mylwd, xlim = c(mytimestart, mytimeend))
-abline(v = vgrids, lty = 3, col = 'grey50')
-
-plot(swmp$DateTimeStamp, swmp$DO_mgl, cex.lab = mycex,
-		type = 'l', las = 1, col = 3, xaxs = 'i',
-		ylab = 'Oxygen (mg/l)',
-		xaxt = 'n',
-		lwd = mylwd, xlim = c(mytimestart, mytimeend))
-abline(v = vgrids, lty = 3, col = 'grey50')
-
-####################
-mypch = '.'
-mycex = 1.2
-myspan = 0.05
-surfHeartS7subset = subset(surfHeartS7, BPMagreeQuality < 2, na.action='na.omit')
-plot(BPMfft~DateTimePST,
-		data = surfHeartS7subset, 
-		col = 1, pch = mypch, type = 'n', las = 1, cex = mycex,
-		ylim = c(0,35), 
-		xlab = 'Date',
-		ylab = 'Heart rate (bpm)',
-		xaxs = 'i',
-		cex.axis = mycex,
-		cex.lab = mycex,
-		xlim = c(mytimestart, mytimeend),
-		xaxt = 'n')
-
-
-# Mussels at surface
-surfHeartS1subset = subset(surfHeartS1, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = surfHeartS1subset$DateTimePST, y = surfHeartS1subset$BPMfft, 
-		col = 7,cex=mycex, span = myspan)
-
-surfHeartS2subset = subset(surfHeartS2, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = surfHeartS2subset$DateTimePST, y = surfHeartS2subset$BPMfft, 
-		col = 6,cex=mycex, span = myspan)
-
-surfHeartS3subset = subset(surfHeartS3, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = surfHeartS3subset$DateTimePST, y = surfHeartS3subset$BPMfft, 
-		col = 5,cex=mycex, span = myspan)
-
-surfHeartS4subset = subset(surfHeartS4, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = surfHeartS4subset$DateTimePST, y = surfHeartS4subset$BPMfft, 
-		col = 4,cex=mycex, span = myspan)
-
-surfHeartS5subset = subset(surfHeartS5, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = surfHeartS5subset$DateTimePST, y = surfHeartS5subset$BPMfft, 
-		col = 3,cex=mycex, span = myspan)
-mtext(text = 'Surface animals, heart rate', side = 3, line = -1.5)
-abline(v = vgrids, lty = 3, col = 'grey50')
-#####################
-
-par(mar = c(1,6.5,0.5,1))
-
-botHeartS7subset = subset(botHeartS7, BPMagreeQuality < 2, na.action='na.omit')
-plot(BPMfft~DateTimePST,
-		data = botHeartS7subset, 
-		col = 1, pch = mypch, type = 'n', las = 1, cex = mycex,
-		ylim = c(0,35), 
-		xlab = 'Date',
-		ylab = 'Heart rate (bpm)',
-		xaxs = 'i',
-		cex.axis = mycex,
-		cex.lab = mycex,
-		xlim = c(mytimestart, mytimeend))
-#botHeartS1subset = subset(botHeartS1, BPMagreeQuality < 2, na.action='na.omit')
-#loessFunc(x = botHeartS1subset$DateTimePST, y = botHeartS1subset$BPMfft, 
-#		col = 1,cex=mycex, span = myspan)
-#
-#botHeartS2subset = subset(botHeartS2, BPMagreeQuality < 2, na.action='na.omit')
-#loessFunc(x = botHeartS2subset$DateTimePST, y = botHeartS2subset$BPMfft, 
-#		col = 2,cex=mycex, span = myspan)
-
-botHeartS3subset = subset(botHeartS3, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = botHeartS3subset$DateTimePST, y = botHeartS3subset$BPMfft, 
-		col = 3,cex=mycex, span = myspan)
-
-botHeartS4subset = subset(botHeartS4, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = botHeartS4subset$DateTimePST, y = botHeartS4subset$BPMfft, 
-		col = 4,cex=mycex, span = myspan)
-
-botHeartS5subset = subset(botHeartS5, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = botHeartS5subset$DateTimePST, y = botHeartS5subset$BPMfft, 
-		col = 5,cex=mycex, span = myspan)
-
-botHeartS6subset = subset(botHeartS6, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = botHeartS6subset$DateTimePST, y = botHeartS6subset$BPMfft, 
-		col = 6, cex =mycex, span = myspan)
-
-botHeartS7subset = subset(botHeartS7, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = botHeartS7subset$DateTimePST, 
-		y = botHeartS7subset$BPMfft, col = 7, cex = mycex, span = myspan)
-
-
-abline(v = vgrids, lty = 3, col = 'grey50')
-mtext(text = 'Bottom animals, heart rate', side = 3, line = -1.5)
-######################
-```
-
-```{r SWMPplot2, echo=showcode, dev = 'png',fig.width=8,fig.height=6,res=300}
-
-#Panel the graphs
-layout(matrix(c(1,2,3,4,5), nrow = 5, ncol = 1),
-		heights = lcm(c(2.5,2.5,2.5,3.25,3.25)),respect=TRUE)
-par(mar = c(0,6.5,0,1))
-mylwd = 2
-mycex = 1.25
-vgrids = as.POSIXct(c('2020-12-24 00:00','2020-12-26 00:00','2020-12-28 00:00',
-				'2020-12-30 00:00', '2021-01-01 00:00'), tz = 'etc/GMT+8')
-
-
-#plot(swmp$DateTimeStamp, swmp$Level, cex.lab = mycex,
-#		type = 'l', las = 1, col = 4, xaxs = 'i',
-#		ylab = 'Depth (m)',
-#		xaxt = 'n',
-#		lwd = mylwd, xlim = c(mytimestart, mytimeend))
-#abline(v = vgrids, lty = 3, col = 'grey50')
-
-#plot.new()
-par(mar = c(0,6.5,0.5,1))
-plot(swmp$DateTimeStamp,swmp$Temp,
-		cex.lab = mycex, type = 'l', las = 1, col = 2,xaxs = 'i',
-		ylab = 'Temp (C)',
-		xaxt = 'n',
-		lwd = mylwd, xlim = c(mytimestart, mytimeend))
-abline(v = vgrids, lty = 3, col = 'grey50')
-plot(swmp$DateTimeStamp, swmp$Turb, cex.lab = mycex,
-		type = 'l', las = 1, col = 'brown', xaxs = 'i',
-		ylab = 'Turbidity (NTU)', 
-		xaxt = 'n',
-		lwd = mylwd, xlim = c(mytimestart, mytimeend))
-abline(v = vgrids, lty = 3, col = 'grey50')
-
-plot(swmp$DateTimeStamp, swmp$DO_mgl, cex.lab = mycex,
-		type = 'l', las = 1, col = 3, xaxs = 'i',
-		ylab = 'Oxygen (mg/l)',
-		xaxt = 'n',
-		lwd = mylwd, xlim = c(mytimestart, mytimeend))
-abline(v = vgrids, lty = 3, col = 'grey50')
-
-####################
-mypch = '.'
-mycex = 1.2
-myspan = 0.05
-surfHeartS7subset = subset(surfHeartS7, BPMagreeQuality < 2, na.action='na.omit')
-plot(BPMfft~DateTimePST,
-		data = surfHeartS7subset, 
-		col = 1, pch = mypch, type = 'n', las = 1, cex = mycex,
-		ylim = c(0,35), 
-		xlab = 'Date',
-		ylab = 'Heart rate (bpm)',
-		xaxs = 'i',
-		cex.axis = mycex,
-		cex.lab = mycex,
-		xlim = c(mytimestart, mytimeend),
-		xaxt = 'n')
-
-
-# Mussels at surface
-surfHeartS1subset = subset(surfHeartS1, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = surfHeartS1subset$DateTimePST, y = surfHeartS1subset$BPMfft, 
-		col = 7,cex=mycex, span = myspan)
-
-surfHeartS2subset = subset(surfHeartS2, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = surfHeartS2subset$DateTimePST, y = surfHeartS2subset$BPMfft, 
-		col = 6,cex=mycex, span = myspan)
-
-surfHeartS3subset = subset(surfHeartS3, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = surfHeartS3subset$DateTimePST, y = surfHeartS3subset$BPMfft, 
-		col = 5,cex=mycex, span = myspan)
-
-surfHeartS4subset = subset(surfHeartS4, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = surfHeartS4subset$DateTimePST, y = surfHeartS4subset$BPMfft, 
-		col = 4,cex=mycex, span = myspan)
-
-surfHeartS5subset = subset(surfHeartS5, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = surfHeartS5subset$DateTimePST, y = surfHeartS5subset$BPMfft, 
-		col = 3,cex=mycex, span = myspan)
-mtext(text = 'Surface animals, heart rate', side = 3, line = -1.5)
-abline(v = vgrids, lty = 3, col = 'grey50')
-#####################
-
-par(mar = c(1,6.5,0.5,1))
-
-botHeartS7subset = subset(botHeartS7, BPMagreeQuality < 2, na.action='na.omit')
-plot(BPMfft~DateTimePST,
-		data = botHeartS7subset, 
-		col = 1, pch = mypch, type = 'n', las = 1, cex = mycex,
-		ylim = c(0,35), 
-		xlab = 'Date',
-		ylab = 'Heart rate (bpm)',
-		xaxs = 'i',
-		cex.axis = mycex,
-		cex.lab = mycex,
-		xlim = c(mytimestart, mytimeend))
-#botHeartS1subset = subset(botHeartS1, BPMagreeQuality < 2, na.action='na.omit')
-#loessFunc(x = botHeartS1subset$DateTimePST, y = botHeartS1subset$BPMfft, 
-#		col = 1,cex=mycex, span = myspan)
-#
-#botHeartS2subset = subset(botHeartS2, BPMagreeQuality < 2, na.action='na.omit')
-#loessFunc(x = botHeartS2subset$DateTimePST, y = botHeartS2subset$BPMfft, 
-#		col = 2,cex=mycex, span = myspan)
-
-botHeartS3subset = subset(botHeartS3, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = botHeartS3subset$DateTimePST, y = botHeartS3subset$BPMfft, 
-		col = 3,cex=mycex, span = myspan)
-
-botHeartS4subset = subset(botHeartS4, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = botHeartS4subset$DateTimePST, y = botHeartS4subset$BPMfft, 
-		col = 4,cex=mycex, span = myspan)
-
-botHeartS5subset = subset(botHeartS5, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = botHeartS5subset$DateTimePST, y = botHeartS5subset$BPMfft, 
-		col = 5,cex=mycex, span = myspan)
-
-
-botHeartS6subset = subset(botHeartS6, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = botHeartS6subset$DateTimePST, y = botHeartS6subset$BPMfft, 
-		col = 6, cex =mycex, span = myspan)
-
-botHeartS7subset = subset(botHeartS7, BPMagreeQuality < 2, na.action='na.omit')
-loessFunc(x = botHeartS7subset$DateTimePST, y = botHeartS7subset$BPMfft, 
-		col = 7, cex = mycex, span = myspan)
-
-
-abline(v = vgrids, lty = 3, col = 'grey50')
-mtext(text = 'Bottom animals, heart rate', side = 3, line = -1.5)
-######################
-```  
-  
