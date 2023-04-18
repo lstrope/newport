@@ -193,12 +193,12 @@ gapBounds2=function(mygaps, maxrow){
         quotient=mydiff/maxrow #quotient=number of subsets (chunks) to make based on max row
         nloops = floor(quotient)
         
-        for (i in nloops){
+        for (i in 1:nloops){
           if (i == 1){
-            temp = data.frame(Start = mygaps$Start[j], End = maxrow)
+            temp = data.frame(Start = mygaps$Start[j], End = mygaps$Start[j]+maxrow)
             mygaps2 = rbind(mygaps2, temp)
           } else if (i > 1 & i < nloops){
-            temp = data.frame(Start = mygaps2$End[nrow(mygaps2)]+1, End = mygaps2$End[nrow(mygaps2)]+maxrow )
+            temp = data.frame(Start = mygaps2$End[nrow(mygaps2)]+1, End = mygaps2$End[nrow(mygaps2)]+maxrow)
             mygaps2 = rbind(mygaps2, temp)
           } else if (i == nloops){
             temp = data.frame(Start = mygaps2$End[nrow(mygaps2)]+1, End = mygaps$End[j])
@@ -438,7 +438,8 @@ calcPercentGapeNLMEsubset <- function (hallData, cRegress, percentileLim = c(0.0
 	# Check if any of the Start/End values in mygaps are less than minrows apart. If they are, remove
 	# that entry from mygaps
 	mydiffs = mygaps$End - mygaps$Start
-	mygaps = mygaps[which(mydiffs > minrows),]
+	# remove chunks that are too small 
+	mygaps = mygaps[which(mydiffs > minrows),] 
 	
 	if (nrow(mygaps > 0)){
 	  # Use gapBounds2 to subdivide the continuous data into chunks of time that are defined by maxrow
@@ -489,7 +490,7 @@ calcPercentGapeNLMEsubset <- function (hallData, cRegress, percentileLim = c(0.0
   		
   		# Use DistFromCounts function to estimate valve gape distance using the input hall
   		# effect count data at each time point and the parameters a,b,c
-  		temp2 = DistFromCounts( hallData[st:end], 
+  		temp2 = DistFromCounts(hallData[st:end], 
   				a = aVal,
   				b = bVal,
   				c = cVal)
@@ -1058,8 +1059,8 @@ oystercode = unique(metafile[,'Code'])
 chNum=1
 cRegress = cRegressEstimate("SN20", chNum,gapecalibfile)
 
-#for(oy in (oystercode)){
-oy="W.O.5.1016"
+for(oy in (oystercode)){
+#oy="W.O.5.1016"
   gapepath=file.path(paste0(combogapefile, oy, "_combogape.csv"))
     if(!file.exists(gapepath)) {
      next
@@ -1089,7 +1090,7 @@ oy="W.O.5.1016"
 	gapedat[which(gapedat$hallpercent>5), "binary"]=1
 	#save as one csv per SN
 	write.csv(gapedat, paste0(combogapefile, oy, "_combogape.csv"), row.names=FALSE)
-#}
+}
 ```
 
 #combine combogape files (w/hallpercent, percentile, binary columns) into one giant dataset. Combine with metadata
@@ -1115,11 +1116,6 @@ allgapemeta$Site <- factor(allgapemeta$Site,levels = c("Westcliff", "PCH", "DeAn
 #make code factor
 allgapemeta$Code<-as.factor(allgapemeta$Code)
 
-### need to toss: D.O.3.1043, P.O.5.1063, S.O.5.1084, D.E.1.1034
-# W.M.5.1025 no good
-# P.O.2.1061 delete
-# S.O.1.1080 toss whole thing?
-               
 #Remove bad gape oysters
 allgapemeta=allgapemeta%>%
   dplyr::filter(Code != "W.M.5.1025" &   #sensor not good
@@ -1134,26 +1130,73 @@ allgapemeta=allgapemeta%>%
 remove(allgape)
 ```
 
-#calculate 1 percent closed value for each SN, graph and glm
+#calculate proportion open/closed for each code, then average them per treatment/site
+```{r}
+#average by site and treatment to get average %open/closed for each oyster in each site/treatment
+gapebinarypercent <- allgapemeta %>%
+  group_by(Code) %>% #do calculations by oyster code
+  drop_na(binary) %>% 
+  group_by(Treatment,Site) %>% 
+  count(binary) %>% 
+  mutate(percentopen=n/sum(n))
+
+gapebinaryopen=gapebinarypercent[gapebinarypercent$binary == '1', ]
+
+cbPalette <- c("#E69F00", "#56B4E9", "#009E73", "#0072B2")
+
+ggplot(gapebinaryopen, aes(Site, percentopen))+
+  #geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
+  geom_bar(position="dodge", stat="summary", fun="mean", fill=cbPalette)+
+  stat_summary(fun.data = mean_cl_boot, geom = "errorbar", width = 0.2, size = 0.75)+
+  ylim(0,1)+
+  theme_classic()+
+  labs(y="Proportion of open valves")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 30))
+
+ggsave(path=plots, "proportion_open_treatment.png", width=6, height=6)
+
+ggplot(gapebinarypercent, aes(Treatment, percentopen, fill=binary))+
+  geom_bar(stat="identity", position="fill")+
+  theme_classic()+
+  scale_fill_discrete(labels=c('Open', 'Closed'), name="Valve gape")+
+  labs(y="Valve gape")
+
+ggplot(gapebinarypercent, aes(Site, n, fill=binary))+
+  geom_bar(stat="identity", position="fill")+
+  theme_classic()+
+  scale_fill_discrete(labels=c('Open', 'Closed'), name="Valve gape")+
+  labs(y="Valve gape")
+```
+
+#calculate proportion open/closed just for nov-march
+```{r}
+gapebinarypercentnov <- allgapemeta %>%
+  filter(DateTime > '2022-11-01') %>% 
+  group_by(Code) %>% #do calculations by oyster code
+  drop_na(binary) %>% 
+  group_by(Treatment,Site) %>% 
+  count(binary) %>% 
+  mutate(percentopen=n/sum(n))
+
+gapebinaryopen=gapebinarypercent[gapebinarypercent$binary == '1', ]
+
+ggplot(gapebinaryopen, aes(Treatment, percentopen))+
+  geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
+  stat_summary(fun.data = mean_cl_boot, geom = "errorbar", width = 0.2, size = 0.75)+
+  ylim(0,1)+
+  theme_classic()+
+  labs(y="Proportion of open valves")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 30))
+
+ggsave(path=plots, "proportion_open_treatment_nov-mar.png", width=6, height=6)
+```
+
+
+#calculate 1 percent closed value for each code, graph and glm
 ```{r}
 #calculate percent closed column 
 allgapemetapercentopen=as.data.frame(allgapemeta %>% 
-  # dplyr::filter(SN!="SN107") %>% #remove bad quality sensors, tried to do with c() but didn't work
-  # dplyr::filter(SN!="SN112")%>%
-  # dplyr::filter(SN!="SN114") %>%
-  # dplyr::filter(SN!="SN115") %>%
-  # dplyr::filter(SN!="SN118") %>%
-  # dplyr::filter(SN!="SN136") %>%
-  # dplyr::filter(SN!="SN143") %>%
-  # dplyr::filter(SN!="SN147") %>%
-  # dplyr::filter(SN!="SN156") %>%
-  # dplyr::filter(SN!="SN157") %>%
-  # dplyr::filter(SN!="SN167") %>%
-  # dplyr::filter(SN!="SN174") %>%
-  # dplyr::filter(SN!="SN197")%>%
-  # dplyr::filter(SN!="SN193") %>%
-  # dplyr::filter(SN!="SN194")%>%
-  group_by(SN, binary) %>% 
+  group_by(Code, binary) %>% 
   summarise(n = n(), 
             Treatment=unique(Treatment), #keep treatment 
             Site=unique(Site), 
@@ -1216,31 +1259,19 @@ gg_color_hue <- function(n) {
   hcl(h = hues, l = 65, c = 100)[1:n]
 }
 
-cols = gg_color_hue(length(levels(my10MinuteSubset$SN)))
-cols[levels(my10MinuteSubset$SN)=="SN150"]="red"
-
 #take every 50th row from dataframe
 my10MinuteSubset = allgapemeta[seq(1,nrow(allgapemeta), by = 50),] 
 
-my10MinuteSubset$binary=as.factor(my10MinuteSubset$binary)
+cols = gg_color_hue(length(levels(my10MinuteSubset$Code)))
+cols[levels(my10MinuteSubset$SN)=="W.M.2.1020"]="red"
+
+highlight_types <- c('W.M.2.1020')
 
 my10MinuteSubset %>%
+  drop_na(binary) %>% 
   #use filter to subset the rows based on the LOCATION column values
   #filter(SN == c("SN150", "SN138", "SN164", "SN143","SN191","")) %>% 
   #remove SN115 bc just looks closed for a couple days at the end. Remove SN112 bc only data in august
-  # dplyr::filter(SN!="SN112")%>%
-  # dplyr::filter(SN!="SN114") %>%
-  # dplyr::filter(SN!="SN115") %>%
-  # dplyr::filter(SN!="SN118") %>%
-  # dplyr::filter(SN!="SN136") %>%
-  # dplyr::filter(SN!="SN143") %>%
-  # dplyr::filter(SN!="SN147") %>%
-  # dplyr::filter(SN!="SN156") %>%
-  # dplyr::filter(SN!="SN157") %>%
-  # dplyr::filter(SN!="SN167") %>%
-  # dplyr::filter(SN!="SN174") %>%
-  # dplyr::filter(SN!="SN197")%>%
-  # dplyr::filter(SN!="SN193") %>%
   # dplyr::filter(SN!="SN194")%>%
   # dplyr::filter(Site=="DeAnza")%>%
   # dplyr::filter(Treatment=="Eelgrass")%>%
@@ -1251,24 +1282,16 @@ my10MinuteSubset %>%
     geom_jitter(aes(y = binary), shape = 1, position = position_dodge(width=0.3))+
     #geom_line(aes(y=Prediction))+
     #geom_beeswarm(dodge.width=0,cex=2,groupOnX=FALSE)+
-    facet_grid(Site~.)+
+    facet_grid(Treatment~.)+
     scale_x_datetime(date_labels = "%b", breaks = "1 month") +
-    #scale_colour_manual(values=group.colors) +
+    #scale_colour_manual(values=cols) +
     scale_y_discrete(labels=c("0" = "Closed", "1" = "Open"))+
     labs(y="Gape", x="")+
   theme_bw()+
   #remove SN legend, take out grid lines but keep facet lines. Change font sizes
   theme(legend.position = "none", axis.line=element_line(), panel.border = element_rect(color = "black",fill = NA,size = 1), panel.grid = element_blank(), axis.text = element_text(size = 20), axis.title = element_text(size = 30), strip.text = element_text(size = 20))
-  
-group.colors <- c(SN104 = "grey", SN107  = "grey", SN111  = "grey", SN113  = "grey", SN120  = "grey", SN123 = "grey", SN125 = "grey", SN130 = "grey", SN132 = "grey", SN133 = "grey", SN138 = "grey", SN141 = "grey", SN142 = "grey", SN144 = "grey", SN145 = "grey", SN148 = "grey", SN150="red", SN152 = "grey", SN153 = "grey", SN154 = "grey", SN159 = "grey", SN160 = "grey", SN161 = "grey", SN164 = "grey", SN170 = "grey", SN171 = "grey", SN176 = "grey", SN184 = "grey", SN187 = "grey", SN191 = "grey", SN196 = "grey")
 
-ggsave("gapeallsitesSN150.png", width = 10, height = 6)
-
-#     scale_y_continuous(
-#     # Features of the first axis
-#     name = "Hall",
-#     # Add a second axis and specify its features
-#     sec.axis = sec_axis(name="Tide"))
+ggsave(path=plots,"gapealltreatment.png", width = 10, height = 6)
 
 ggplot(my10MinuteSubset, aes(x = DateTime, Prediction))+
   geom_line(group=1)+
@@ -1297,12 +1320,73 @@ my10MinuteSubset %>%
   theme(legend.position = "none", axis.line=element_line(), panel.border = element_rect(color = "black",fill = NA,size = 1), panel.grid = element_blank(), axis.text = element_text(size = 20), axis.title = element_text(size = 30), strip.text = element_text(size = 20))
 ```
 
+#only color one oyster
+```{r}
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+
+cols = gg_color_hue(length(levels(my10MinuteSubset$Code)))
+cols[levels(my10MinuteSubset$SN)=="W.M.2.1020"]="red"
+
+highlight_types <- c('W.M.2.1020')
+
+subsetnoNAs=my10MinuteSubset %>% 
+  drop_na(binary)
+  
+  ggplot(aes(x = DateTime,col=Code))+
+       geom_point(data=subsetnoNAs[which(!(subsetnoNAs$Code %in% highlight_types)),],aes(y=binary),color='gray75', size=2)+
+    geom_point(data=subsetnoNAs[which(subsetnoNAs$Code %in% highlight_types),],aes(color=Code,y=binary), size=2) +
+    #geom_jitter(aes(y = binary), shape = 1, position = position_dodge(width=0.3))+
+    facet_grid(Treatment~.)+
+    scale_x_datetime(date_labels = "%b", breaks = "1 month") +
+    scale_y_discrete(labels=c("0" = "Closed", "1" = "Open"))+
+    labs(y="Gape", x="")+
+  theme_bw()+
+  #remove SN legend, take out grid lines but keep facet lines. Change font sizes
+  theme(legend.position = "none", axis.line=element_line(), panel.border = element_rect(color = "black",fill = NA,size = 1), panel.grid = element_blank(), axis.text = element_text(size = 20), axis.title = element_text(size = 30), strip.text = element_text(size = 20))
+
+ggsave(path=plots,"gapeallsites1020.png", width = 10, height = 6)
+
+
+
+```
+
+#graph binary plot per oyster
+```{r}
+#won't print out every oyster bc if first binary is NA then skips over entire thing. But prints many of them. Just to check for ones that were closed for extended periods of time to pull out of allgape graph for presentation.
+subcode = unique(my10MinuteSubset[,'Code'])
+
+for (oy in subcode){
+  subdata=my10MinuteSubset[my10MinuteSubset$Code == oy,]
+  if(!is.na(subdata$binary)) {
+    subdata %>%
+    dplyr::filter(!is.na(binary)) %>%
+    ggplot(aes(x = DateTime))+
+      geom_jitter(aes(y = binary), shape = 1, position = position_dodge(width=0.3))+
+      scale_y_discrete(labels=c("0" = "Closed", "1" = "Open"))+
+      theme_bw()+
+    #remove SN legend, take out grid lines but keep facet lines. Change font sizes
+    theme(legend.position = "none", axis.line=element_line(), panel.border = element_rect(color = "black",fill = NA,size = 1), panel.grid = element_blank(), axis.text = element_text(size = 20), axis.title = element_text(size = 30), strip.text = element_text(size = 20))
+    
+    ggsave(path=plots, file=paste0("gape",oy,".png"), width = 10, height = 6)
+  }
+}
+
+```
+
 #calculate binary proportions
 ```{r}
 #calculate number of non-NA values, find fraction that are 1s and fraction that are 0s to get %closed/open. 
 binarycounts=data.frame(tabyl(allgapemeta, Site, Treatment, binary))
 #rename Site column
 binarycounts$Site=binarycounts$X0.Site
+
+#generate with percents
+tabyl(allgapemeta, binary, Treatment) %>%
+  adorn_percentages("col") %>%
+  adorn_pct_formatting(digits = 1)
 
 #Remove extra columns
 binarycounts = subset(binarycounts, select = -c(X1.Site,X0.Site) )
