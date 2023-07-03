@@ -4,21 +4,26 @@ output: html_document
 date: '2022-08-03'
 editor_options: 
   chunk_output_type: console
+  markdown: 
+    wrap: 72
 ---
 
 ### To do:
 
-## Get raw hall value (not ninetieth distance mm value) because when calculate distances looks at asymptotic value from raw hall. Truncate raw hall values on percentilelim function. from previous chunk and use as 
-#Get max of percentilRange and use as raw hall value. Then plug in as argument in 
-# Do this with aVal and bVal
+## Get raw hall value (not ninetieth distance mm value) because when calculate distances looks at asymptotic value from raw hall. Truncate raw hall values on percentilelim function. from previous chunk and use as
+
+#Get max of percentilRange and use as raw hall value. Then plug in as
+argument in \# Do this with aVal and bVal
 
 ##Callibration stuff???
 
-Figure out why the combogape file has a bunch of extraneous columns added onto 
-the front of the file. They may be rownumbers getting saved as new columns
+Figure out why the combogape file has a bunch of extraneous columns
+added onto the front of the file. They may be rownumbers getting saved
+as new columns
 
-### calculate individual % open/closed. Then take average of all oysters in each treatment/site/by month but average has to be weighted bc some oysters only collect for 1 day vs others for 3 months. Then somehow do variance with weighted averages. 
-```{r setup, include=FALSE} 
+### calculate individual % open/closed. Then take average of all oysters in each treatment/site/by month but average has to be weighted bc some oysters only collect for 1 day vs others for 3 months. Then somehow do variance with weighted averages.
+
+```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
@@ -60,7 +65,7 @@ plots=paste0(localpath,'Newport_SSINP/plots/')
 
 ```
 
-#Functions: gapBounds, gapBounds2, hallFilter, DistFromCounts, percentileRange, calcPercentGapeNLME, calcPercentGapeNLMEsubset, CRegressEstimate
+#Functions: gapBounds, gapBounds2, hallFilter, DistFromCounts,percentileRange, calcPercentGapeNLME, calcPercentGapeNLMEsubset,CRegressEstimate
 ```{r gapBoundsFunctions, echo=showcode}
 
 # A set of functions originally taken from MusselTracker_data_proc4.R to 
@@ -721,7 +726,7 @@ ConcatGapeFiles <- function(filenames, myTimeZone = 'UTC', code = '', startDate 
 	# Battery.V:  Supply battery voltage
 		#########################
 	# Convert the DateTime column to a POSIXct object.
-		dattemp$DateTime = as.POSIXct(dattemp$DateTime, tz=myTimeZone) 
+		dattemp$DateTime = as.POSIXct(dattemp$DateTime, tz=myTimeZone, format="%Y-%m-%d %H:%M:%S") 
 		# Look for any dates that happened before July 2022, these must be mis-entered
 		# time values from Jan 2023 that were recorded as Jan 2022
 		if (min(dattemp$DateTime) < as.POSIXct('2022-07-01')){
@@ -825,7 +830,7 @@ exciseHall = function(halldata, metadf, maintenance, timeofdeath, maxGapFill = 1
 	
 	# Convert the input halldata into a zoo object also
 	temp = zoo(halldata[,c('Hall', 'Temp.C','Battery.V','SN', 'Code')], 
-	           order.by = halldata[,1], frequency = 1)
+	           order.by = halldata[,"DateTime"], frequency = 2)
 	
 	# Insert the temp data into the zoo object tempoutput
 	# The syntax is fun here: On the left side of the equals sign,
@@ -859,16 +864,17 @@ exciseHall = function(halldata, metadf, maintenance, timeofdeath, maxGapFill = 1
 	  # Find the matching time stamps and write NAs in between them
 	  startTime = maintenance$StartMaintUTC[k]
 	  endTime = maintenance$EndMaintUTC[k]
-	  # THis may not work with tempoutput in the zoo format, but the point is to 
+	  # This may not work with tempoutput in the zoo format, but the point is to 
 	  # NA those lines that are within the startTime and endTime boundaries
 	  tempoutput[which((index(tempoutput) > startTime) & (index(tempoutput) < endTime)),] = NA
+	  #tempoutput[which((index(temp) > startTime) & (index(temp) < endTime)),] = NA
 	}
 	
 	
 		# Convert tempoutput back to a data frame and stick it onto an output
 		# dataframe
 	outputdf = data.frame(DateTime = index(tempoutput), tempoutput)
-	
+	#outputdf = data.frame(DateTime = index(temp), temp)
 	  # Remove hall data for after an oyster has died
 
 	if (!is.null(timeofdeath)){
@@ -893,7 +899,7 @@ exciseHall = function(halldata, metadf, maintenance, timeofdeath, maxGapFill = 1
 # Function to load a particular sensor's Hall effect data. This assumes that a path already exists called combogapefile
 loadComboGape = function(oy) {
 	gape = read.csv(paste0(combogapefile,oy,'_combogape.csv'))
-	gape$DateTime = as.POSIXct(gape$DateTime, tz = 'UTC')
+	gape$DateTime = as.POSIXct(gape$DateTime, tz = 'UTC', format="%Y-%m-%d %H:%M:%S")
 	gape
 }
 # install.packages("tidyquant")
@@ -966,10 +972,8 @@ growth=read.csv(paste0(metafilePath, "growth_measurements - Sheet1.csv"))
 ```{r get-list-of-files-and-make-big-csv, echo=FALSE}
 #use unique() on first column. Save result as "serialnumber"
 serialnumber=unique(metafile[,1])
-oystercode = unique(metafile[,'Code'])
-
-# go through each serial number in the vector 'serialnumber' and find all files, 
-# combine them together, and spit out combogapefile at end
+oystercode = unique(metafile[,'Code']) #make list of all oyster codes 
+#oystercode=oystercode[c(1:4)] #manually change which codes are combined 
 ######################################## 
 
 # for(i in (serialnumber)){
@@ -1036,23 +1040,8 @@ for (oy in (oystercode) ){
 } # end of oystercode for loop 
 ```
 
-#Remove outliers for specific oysters.
-```{r}
-# P.M.3.1069 keep everything after 2022-10-23 21:21:00
-gapepath=file.path(paste0(combogapefile, "P.M.3.1069", "_combogape.csv"))
-gapedat=read.csv(gapepath)
-gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC")
-
-gapedat=gapedat %>% 
-  filter(DateTime>"2022-10-23 21:21:00")
-
-#plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
-
-write.csv(gapedat, paste0(combogapefile, "P.M.3.1069", "_combogape.csv"), row.names=FALSE)
-
-```
-
-#write over combogape files to add in percent gape and percentiles for binary graphing
+#write over combogape files to add in percent gape and percentiles for
+#binary graphing
 ```{r calcPercentageGape,echo=showcode, eval = evalAll}
 #get data from calibration. Generate set of regression coefficients and put them in cRegress. Use cRegress to do % calculation.
 oystercode = unique(metafile[,'Code'])
@@ -1093,6 +1082,192 @@ for(oy in (oystercode)){
 }
 ```
 
+#Remove outliers for specific oysters.
+```{r}
+#Remove bad gape oysters
+allgape=allgape%>%
+  dplyr::filter(
+    Code!="D.M.4.1048" & #sensor not good
+    Code!="W.M.5.1025" & #sensor not good
+    Code!="P.O.2.1061" & #sensor not good
+    Code!="S.O.1.1080" & #sensor not good
+    Code!="D.O.3.1043" & #sensor saturated
+    Code!="P.O.5.1063" & #sensor saturated
+    Code!="D.E.1.1034" & #sensor saturated
+    Code!="S.O.5.1084" & #sensor saturated
+    Code!="S.O.3.1094" & #sensor not good
+    Code!="S.O.1.1085" & #sensor not good
+    Code!="W.O.3.1099" & #sensor not good
+    Code!="P.O.1.1064" & #sensor not good
+    Code!="S.O.2.1093" & #sensor not good
+    Code!="D.O.1.1042" & #sensor not good
+    Code!="P.O.2.1066" & #sensor not good
+    Code!="D.E.1.1035" & #sensor not good
+    Code!="W.O.3.1014" & #sensor not good
+    Code!="D.M.1.1051" & #sensor not good
+    Code!="W.O.1.1017" & #sensor saturated
+    Code!="P.O.1.1057" & #sensor not good
+    Code!="D.O.4.1040" & #sensor not good
+    Code!="D.O.4.1039" & #sensor not good
+    Code!="W.E.5.1003" & #sensor saturated
+    Code!="D.E.3.1030" & #sensor not good
+    Code!="D.M.6.1056" & #sensor not good  
+    Code!="W.E.2.1006" ) #sensor saturated
+
+########## Individually cut off sensor data after death or certain dates
+#P.M.3.1069 keep everything after 2022-10-23 21:21:00
+gapepath=file.path(paste0(combogapefile, "P.M.3.1069", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime>"2022-10-23 21:21:00")
+write.csv(gapedat, paste0(combogapefile, "P.M.3.1069", "_combogape.csv"), row.names=FALSE)
+
+#plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+
+#####D.O.1.1100 keep everything after 2023-04-21 00:00:00
+gapepath=file.path(paste0(combogapefile, "D.O.1.1100", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime>"2023-04-21 00:00:00")
+write.csv(gapedat, paste0(combogapefile, "D.O.1.1100", "_combogape.csv"), row.names=FALSE)
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+
+#####D.M.1.1102 keep everything after 2023-05-15 00:00:00
+gapepath=file.path(paste0(combogapefile, "D.M.1.1102", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime>"2023-05-15 00:00:00")
+write.csv(gapedat, paste0(combogapefile, "D.M.1.1102", "_combogape.csv"), row.names=FALSE)
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+
+#####D.M.1.1091 keep everything after 2023-02-15 00:00:00 and before 2023-05-02 20:00:00
+gapepath=file.path(paste0(combogapefile, "D.M.1.1091", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime>"2023-02-15 00:00:00") %>% 
+  filter(DateTime<"2023-05-02 20:00:00")
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "D.M.1.1091", "_combogape.csv"), row.names=FALSE)
+
+#####D.M.2.1047 keep everything  before 2022-08-15 00:00:00
+gapepath=file.path(paste0(combogapefile, "D.M.2.1047", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime<"2022-08-15 00:00:00")
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "D.M.2.1047", "_combogape.csv"), row.names=FALSE)
+
+#####W.E.6.1005 keep everything  before 2023-05-07 00:00:00
+gapepath=file.path(paste0(combogapefile, "W.E.6.1005", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime<"2023-05-07 00:00:00")
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "W.E.6.1005", "_combogape.csv"), row.names=FALSE)
+
+#####S.M.1.1092 keep everything >"2023-02-18 00:00:00"
+gapepath=file.path(paste0(combogapefile, "S.M.1.1092", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime>"2023-02-18 00:00:00")
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "S.M.1.1092", "_combogape.csv"), row.names=FALSE)
+
+#####W.O.1.1096 keep everything>"2023-05-18 00:00:00"
+gapepath=file.path(paste0(combogapefile, "W.O.1.1096", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime>"2023-05-18 00:00:00")
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "W.O.1.1096", "_combogape.csv"), row.names=FALSE)
+
+#####W.M.3.1022 keep everything<"2023-04-12 06:57:00"
+gapepath=file.path(paste0(combogapefile, "W.M.3.1022", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime<"2023-04-12 06:57:00")
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "W.M.3.1022", "_combogape.csv"), row.names=FALSE)
+
+#####P.E.1.1078 
+gapepath=file.path(paste0(combogapefile, "P.E.1.1078", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime>"2023-01-22 00:00:00")
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "P.E.1.1078", "_combogape.csv"), row.names=FALSE)
+
+#####S.M.2.1090 
+gapepath=file.path(paste0(combogapefile, "S.M.2.1090", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime>"2023-04-23 00:00:00")%>% 
+  filter(DateTime<"2023-04-27 00:00:00")
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "S.M.2.1090", "_combogape.csv"), row.names=FALSE)
+
+
+```
+
+#double check with luke
+```{r}
+#####D.E.3.1036
+gapepath=file.path(paste0(combogapefile, "D.E.3.1036", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime>"2022-12-26 12:00:00")
+
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "D.E.3.1036", "_combogape.csv"), row.names=FALSE)
+```
+
+#gape test plots
+```{r testPlotsGape, eval=FALSE}
+
+for (oy in (oystercode)){
+  filecheck = file.path(paste0(combogapefile,oy,'_combogape.csv'))
+  if(!file.exists(filecheck)) {
+   next
+  }
+  png(file=paste0(plots,"hallpercenttest/",oy,"_hall_test.png"), width=800, height=600)
+  testdata=loadComboGape(oy)
+    if(all(is.na(testdata[,'Hall']))){
+    next
+  }
+  plot2HallFunction(testdata)
+  dev.off()
+  remove(testdata)
+ }
+
+# #for (oy in (oystercode)){
+#   filecheck = file.path(paste0(combogapefile,oy,'_combogape.csv'))
+#   if(!file.exists(filecheck)) {
+#    next
+#   }
+#   #png(file=paste0(plots,"hallpercenttest/W.O.5.1016/",oy,"_reusemaxhall_test.png"), width=800, height=600)
+#   testdata=loadComboGape(oy)
+#     if(all(is.na(testdata[,'Hall']))){
+#     next
+#   }
+#   plot2HallFunction(testdata)
+#   #dev.off()
+#   remove(testdata)
+# }
+
+```
+
 #combine combogape files (w/hallpercent, percentile, binary columns) into one giant dataset. Combine with metadata
 ```{r combine-all-gape-files-and-add-metadata}
 #combine all data frames into 1
@@ -1102,7 +1277,7 @@ allgape <- list.files(path=combogapefile, full.names = T) %>%
   dplyr::filter(!is.na(Hall))
 
 #change datetime to posixct
-allgape$DateTime=as.POSIXct(allgape$DateTime, tz="UTC")
+allgape$DateTime=as.POSIXct(allgape$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
 
 #combine metafile and allgape by SN to get treatment/site for each sensor
 allgapemeta<-merge(allgape,metafile[, c("Site", "Treatment","Alive","Code")], by="Code")
@@ -1115,17 +1290,6 @@ allgapemeta$binary=as.factor(allgapemeta$binary)
 allgapemeta$Site <- factor(allgapemeta$Site,levels = c("Westcliff", "PCH", "DeAnza", "Shellmaker"))
 #make code factor
 allgapemeta$Code<-as.factor(allgapemeta$Code)
-
-#Remove bad gape oysters
-allgapemeta=allgapemeta%>%
-  dplyr::filter(Code != "W.M.5.1025" &   #sensor not good
-           Code!="P.O.2.1061" & #sensor not good
-           Code!="S.O.1.1080" & #sensor not good
-           Code!="D.O.3.1043" & #sensor saturated
-           Code!="P.O.5.1063" & #sensor saturated
-           Code!="D.E.1.1034" & #sensor saturated
-           Code!="S.O.5.1084" & #sensor saturated
-           Code!="D.E.3.1030" ) #sensor not good
 
 remove(allgape)
 ```
@@ -1144,16 +1308,28 @@ gapebinaryopen=gapebinarypercent[gapebinarypercent$binary == '1', ]
 
 cbPalette <- c("#E69F00", "#56B4E9", "#009E73", "#0072B2")
 
-ggplot(gapebinaryopen, aes(Site, percentopen))+
-  #geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
-  geom_bar(position="dodge", stat="summary", fun="mean", fill=cbPalette)+
-  stat_summary(fun.data = mean_cl_boot, geom = "errorbar", width = 0.2, size = 0.75)+
+ggplot(gapebinaryopen, aes(Treatment, percentopen, fill = Treatment)) +      # ggplot2 barplot with error bars
+  geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
+  stat_summary(geom = "errorbar", fun.data = mean_se, position = "dodge",width = 0.2, size = 0.75)+
   ylim(0,1)+
   theme_classic()+
   labs(y="Proportion of open valves")+
   theme(axis.text = element_text(size = 20), axis.title = element_text(size = 30))
 
-ggsave(path=plots, "proportion_open_treatment.png", width=6, height=6)
+ggsave(path=plots, "proportion_open_treatment.png", width=7, height=6)
+
+ggplot(gapebinaryopen, aes(Site, percentopen))+
+  #geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
+  geom_bar(position="dodge", stat="summary", fun="mean", fill=cbPalette)+
+  #check that it's standard error
+  #geom_errorbar( aes(x=name, ymin=value-sd, ymax=value+sd), width=0.4, colour="orange", alpha=0.9, size=1.3)
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  ylim(0,1)+
+  theme_classic()+
+  labs(y="Proportion of open valves")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 30))
+
+ggsave(path=plots, "proportion_open_site.png", width=7, height=6)
 
 ggplot(gapebinarypercent, aes(Treatment, percentopen, fill=binary))+
   geom_bar(stat="identity", position="fill")+
@@ -1171,18 +1347,18 @@ ggplot(gapebinarypercent, aes(Site, n, fill=binary))+
 #calculate proportion open/closed just for nov-march
 ```{r}
 gapebinarypercentnov <- allgapemeta %>%
-  filter(DateTime > '2022-11-01') %>% 
+    filter(DateTime > '2022-11-01') %>% 
   group_by(Code) %>% #do calculations by oyster code
   drop_na(binary) %>% 
   group_by(Treatment,Site) %>% 
   count(binary) %>% 
   mutate(percentopen=n/sum(n))
 
-gapebinaryopen=gapebinarypercent[gapebinarypercent$binary == '1', ]
+gapebinarypercentnov=gapebinarypercentnov[gapebinarypercentnov$binary == '1', ]
 
-ggplot(gapebinaryopen, aes(Treatment, percentopen))+
+ggplot(gapebinarypercentnov, aes(Treatment, percentopen))+
   geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
-  stat_summary(fun.data = mean_cl_boot, geom = "errorbar", width = 0.2, size = 0.75)+
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
   ylim(0,1)+
   theme_classic()+
   labs(y="Proportion of open valves")+
@@ -1190,7 +1366,6 @@ ggplot(gapebinaryopen, aes(Treatment, percentopen))+
 
 ggsave(path=plots, "proportion_open_treatment_nov-mar.png", width=6, height=6)
 ```
-
 
 #calculate 1 percent closed value for each code, graph and glm
 ```{r}
@@ -1230,14 +1405,14 @@ summary(percentopenmodel)
 
 ```
 
-#add tide levels 
+#add tide levels
 ```{r}
 allgapemetatides <- 
   left_join(allgapemeta, julyaugusttides, by = 'DateTime') #%>% 
   #mutate(y = replace(y, is.na(y), 0))
 
 ##plot tides
-julyaugusttides$DateTime=as.POSIXct(julyaugusttides$Date.Time, tz="UTC")
+julyaugusttides$DateTime=as.POSIXct(julyaugusttides$Date.Time, tz="UTC", format="%Y-%m-%d %H:%M:%S")
 julyaugusttides = subset(julyaugusttides, select = -Date.Time)
 
 ggplot(julyaugusttides, aes(DateTime, Prediction))+
@@ -1372,6 +1547,19 @@ for (oy in subcode){
     
     ggsave(path=plots, file=paste0("gape",oy,".png"), width = 10, height = 6)
   }
+}
+
+for (oy in subcode){
+  subdata=my10MinuteSubset[my10MinuteSubset$Code == oy,]
+  subdata %>%
+      ggplot(aes(x = DateTime))+
+        geom_jitter(aes(y = binary), shape = 1, position = position_dodge(width=0.3))+
+        scale_y_discrete(labels=c("0" = "Closed", "1" = "Open"))+
+        theme_bw()+
+      #remove SN legend, take out grid lines but keep facet lines. Change font sizes
+      theme(legend.position = "none", axis.line=element_line(), panel.border = element_rect(color = "black",fill = NA,size = 1), panel.grid = element_blank(), axis.text = element_text(size = 20), axis.title = element_text(size = 30), strip.text = element_text(size = 20))
+      
+    ggsave(path=plots, file=paste0("gape",oy,".png"), width = 10, height = 6)
 }
 
 ```
@@ -1510,28 +1698,6 @@ valvetreatment.glm <-  glm(formula = percentclosed ~ Treatment,
 
 ```
 
-#gape test plots
-```{r testPlotsGape, eval=FALSE}
-oy="W.O.5.1016"
-
-# for (oy in (oystercode)){
-  filecheck = file.path(paste0(combogapefile,oy,'_combogape.csv'))
-  if(!file.exists(filecheck)) {
-   next
-  }
-  #png(file=paste0(plots,"hallpercenttest/W.O.5.1016/",oy,"_reusemaxhall_test.png"), width=800, height=600)
-  testdata=loadComboGape(oy)
-    if(all(is.na(testdata[,'Hall']))){
-    next
-  }
-  plot2HallFunction(testdata)
-  #dev.off()
-  remove(testdata)
-# }
-
-```
-
-
 ```{r lukeScratch2, eval = FALSE}
 require(nlme)
 gapecalibfile = paste0(localpath,'Newport_SSINP/calibration/202303_calibrations_ostrea - Sheet1.csv')
@@ -1549,14 +1715,13 @@ gC2 = groupedData(Reading1~Distance_mm|Code/time,data=gC)
 
 ```
 
-
 ```{r lukeScratch1, eval = FALSE}
 # Messing around with the Hall data for growing oysters
 
 # gapedat should hold data for oyster W.O.5.1016
 oy="W.O.5.1016"
 gapedat=loadComboGape(oy)
-gapedat$DateTime = as.POSIXct(gapedat$DateTime, tz='UTC')
+gapedat$DateTime = as.POSIXct(gapedat$DateTime, tz='UTC', format="%Y-%m-%d %H:%M:%S")
 
 #plot(gapedat$DateTime, gapedat$Hall, type = 'l')
 
@@ -1612,10 +1777,7 @@ abline(h = bottomline$Hall[1], col = 4)
 
 ```
 
-
-
-
-#add temp data on SN150 
+#add temp data on SN150
 ```{r}
 
 #without temp
@@ -1648,14 +1810,19 @@ ggsave("SN150_with_temp.png", width=6.5, height=5)
 
 #look for saturated sensors
 ```{r}
-saturated=allgape[allgape$Hall< 20, ]
+saturated=allgapemeta[allgapemeta$Hall< 20, ]
+
+unique(saturated$Code)
+
+# D.E.1.1032, D.E.2.1028, D.E.4.1033, D.M.2.1052, D.O.5.1038, P.M.1.1067, P.M.3.1069, P.M.5.1067, P.O.2.1060, P.O.3.1060, W.E.5.1009, W.E.6.1004, W.O.2.1012
 
 ### need to toss: D.O.3.1043, P.O.5.1063, S.O.5.1084, D.E.1.1034
 # W.M.5.1025 no good
 # P.O.2.1061 delete
 # P.M.3.1069 keep everything after 2022-10-23 21:21:00
 # S.O.1.1080 toss whole thing?
-allgape %>%
+
+allgapemeta %>%
   dplyr::filter(Code=="W.E.6.1004")%>% 
   #dplyr::filter(DateTime<as.POSIXct("2022-10-17"))%>%
   ggplot(aes(x=DateTime, y=Hall))+
@@ -1683,6 +1850,7 @@ fielddeath$DateTime[128710]
 ```
 
 #growth data
+
 ```{r}
 growth$Date=as.Date(growth$Date)
 growth %>% 
@@ -1692,279 +1860,166 @@ growth %>%
   geom_line()
 ```
 
+#Extra code \`\`\`{#r extra tide code} library(rnoaa) library(tidyverse)
+library(ggplot2) library(suncalc) library(scales)
 
-#Extra code
-```{#r extra tide code}
-library(rnoaa)
-library(tidyverse)
-library(ggplot2)
-library(suncalc)
-library(scales)
+july.tides \<- as.data.frame(coops_search(station_name = 9410660,
+begin_date = 20220701, end_date = 20210731, datum = "MLLW", product =
+"predictions"))
 
-july.tides <- as.data.frame(coops_search(station_name = 9410660,
-                                          begin_date = 20220701, end_date = 20210731,
-                                          datum = "MLLW", product = "predictions"))
+march.tides \<- march.tides %\>% mutate(yyyy.mm.dd =
+as.Date(predictions.t, tz = "EST")) dates \<-
+unique(march.tides\$yyyy.mm.dd) sunlight.times \<- getSunlightTimes(date
+= seq.Date(as.Date("2020/3/1"), as.Date("2020/3/31"), by = 1), lat =
+39.5817, lon = -75.5883, tz = "EST")
 
-march.tides <- march.tides %>%
-  mutate(yyyy.mm.dd = as.Date(predictions.t, tz = "EST"))
-dates <- unique(march.tides$yyyy.mm.dd)
-sunlight.times <- getSunlightTimes(date = seq.Date(as.Date("2020/3/1"), as.Date("2020/3/31"), by = 1),
-                                   lat = 39.5817, lon = -75.5883, tz = "EST")
+for (i in seq_along(dates)) { plot \<- ggplot(subset(march.tides,
+march.tides$yyyy.mm.dd==dates[i])) +  aes(x = predictions.t, y = predictions.v) +  geom_line(size = 1L, colour = "#0c4c8a") +  theme_bw() +  geom_vline(xintercept = sunlight.times$sunrise) +
+geom_vline(xintercept =
+sunlight.times$sunset) +  geom_vline(xintercept = sunlight.times$dawn,
+linetype="dotted") + geom_vline(xintercept = sunlight.times\$dusk,
+linetype="dotted") + ggtitle(dates[i]) + scale_x_datetime(labels =
+date_format("%b %d %H:%M", tz = "EST")) print(plot) } S.M.2.1087 =
+loadComboGape('S.M.2.1087') plotRawHallFunction(SN142)
+plot2HallFunction(SN142) remove(SN142)
 
-for (i in seq_along(dates)) {
-  plot <- ggplot(subset(march.tides, march.tides$yyyy.mm.dd==dates[i])) +
-    aes(x = predictions.t, y = predictions.v) +
-    geom_line(size = 1L, colour = "#0c4c8a") +
-    theme_bw() +
-    geom_vline(xintercept = sunlight.times$sunrise) +
-    geom_vline(xintercept = sunlight.times$sunset) +
-    geom_vline(xintercept = sunlight.times$dawn, linetype="dotted") +
-    geom_vline(xintercept = sunlight.times$dusk, linetype="dotted") +
-    ggtitle(dates[i]) +
-    scale_x_datetime(labels = date_format("%b %d %H:%M", tz = "EST"))
-  print(plot)
-}
-S.M.2.1087 = loadComboGape('S.M.2.1087')
-plotRawHallFunction(SN142)
-plot2HallFunction(SN142)
-remove(SN142)
+SN191 = loadComboGape('SN191') plot2HallFunction(SN191) remove(SN191)
 
-SN191 = loadComboGape('SN191')
-plot2HallFunction(SN191)
-remove(SN191)
-
-SN118 = loadComboGape('SN118') #badO
-plot2HallFunction(SN118)
+SN118 = loadComboGape('SN118') #badO plot2HallFunction(SN118)
 remove(SN118)
 
-SN187 = loadComboGape('SN187')
-plot2HallFunction(SN187)
-remove(SN187)
+SN187 = loadComboGape('SN187') plot2HallFunction(SN187) remove(SN187)
 
-SN152 = loadComboGape('SN152') # The low hump at Jul 27 is shared with SN176
-plot2HallFunction(SN152)
-remove(SN152)
+SN152 = loadComboGape('SN152') \# The low hump at Jul 27 is shared with
+SN176 plot2HallFunction(SN152) remove(SN152)
 
-SN104 = loadComboGape('SN104')
-plot2HallFunction(SN104)
-remove(SN104)
+SN104 = loadComboGape('SN104') plot2HallFunction(SN104) remove(SN104)
 
-SN176 = loadComboGape('SN176')  # The low hump around Jul 27 is shared with SN152
-plot2HallFunction(SN176)
-remove(SN176)
+SN176 = loadComboGape('SN176') \# The low hump around Jul 27 is shared
+with SN152 plot2HallFunction(SN176) remove(SN176)
 
-SN174 = loadComboGape('SN174')  # Bad sensor? 
-plot2HallFunction(SN174)
+SN174 = loadComboGape('SN174') \# Bad sensor? plot2HallFunction(SN174)
 remove(SN174)
 
-SN130 = loadComboGape('SN130')
-plot2HallFunction(SN130)
-remove(SN130)
+SN130 = loadComboGape('SN130') plot2HallFunction(SN130) remove(SN130)
 
-SN132 = loadComboGape('SN132')
-plot2HallFunction(SN132)
-remove(SN132)
+SN132 = loadComboGape('SN132') plot2HallFunction(SN132) remove(SN132)
 
-SN123 = loadComboGape('SN123')  # Clean up the large outliers near start and end
-plot2HallFunction(SN123)
-remove(SN123)
+SN123 = loadComboGape('SN123') \# Clean up the large outliers near start
+and end plot2HallFunction(SN123) remove(SN123)
 
-SN150 = loadComboGape('SN150')
-plot2HallFunction(SN150)
-remove(SN150)
+SN150 = loadComboGape('SN150') plot2HallFunction(SN150) remove(SN150)
 
-SN138 = loadComboGape('SN138')
-plot2HallFunction(SN138)
-remove(SN138)
+SN138 = loadComboGape('SN138') plot2HallFunction(SN138) remove(SN138)
 
-SN164 = loadComboGape('SN164')  # Weird change in opening limit around Aug 6, like it could no longer open as far. SN164
-plot2HallFunction(SN164)
-remove(SN164)
+SN164 = loadComboGape('SN164') \# Weird change in opening limit around
+Aug 6, like it could no longer open as far. SN164
+plot2HallFunction(SN164) remove(SN164)
 
-SN170 = loadComboGape('SN170')
-plot2HallFunction(SN170)
-remove(SN170)
+SN170 = loadComboGape('SN170') plot2HallFunction(SN170) remove(SN170)
 
-SN115 = loadComboGape('SN115') #bad
-plot2HallFunction(SN115)
+SN115 = loadComboGape('SN115') #bad plot2HallFunction(SN115)
 remove(SN115)
 
-SN143 = loadComboGape('SN143') # Some kind of malfunction
-plot2HallFunction(SN143)
-remvove(SN143)
+SN143 = loadComboGape('SN143') \# Some kind of malfunction
+plot2HallFunction(SN143) remvove(SN143)
 
-SN191 = loadComboGape('SN191')
-plot2HallFunction(SN191)
-remove(SN191)
+SN191 = loadComboGape('SN191') plot2HallFunction(SN191) remove(SN191)
 
-SN125 = loadComboGape('SN125')  # Listed as dead, maybe why the upper limit shifts down in the last few days? Around July 26
-plot2HallFunction(SN125)
-remove(SN125)
+SN125 = loadComboGape('SN125') \# Listed as dead, maybe why the upper
+limit shifts down in the last few days? Around July 26
+plot2HallFunction(SN125) remove(SN125)
 
-SN197 = loadComboGape('SN197')
-plot2HallFunction(SN197)
-remove(SN197)
+SN197 = loadComboGape('SN197') plot2HallFunction(SN197) remove(SN197)
 
-SN153 = loadComboGape('SN153')
-plot2HallFunction(SN153)
-remove(SN153)
+SN153 = loadComboGape('SN153') plot2HallFunction(SN153) remove(SN153)
 
-SN171 = loadComboGape('SN171') # Strange dip around Aug 1-5
-plot2HallFunction(SN171)
-remove(SN171)
+SN171 = loadComboGape('SN171') \# Strange dip around Aug 1-5
+plot2HallFunction(SN171) remove(SN171)
 
-SN112 = loadComboGape('SN112')  # I think this one is saturating the sensor when closed, magnet is too close, baseline closed value is possibly spurious
-plot2HallFunction(SN112)
-remove(SN112)
+SN112 = loadComboGape('SN112') \# I think this one is saturating the
+sensor when closed, magnet is too close, baseline closed value is
+possibly spurious plot2HallFunction(SN112) remove(SN112)
 
-SN193 = loadComboGape('SN193')  # Bad sensor
-plot2HallFunction(SN193)
+SN193 = loadComboGape('SN193') \# Bad sensor plot2HallFunction(SN193)
 remove(SN193)
 
-SN118 = loadComboGape('SN118') # Maybe died around Aug 9? Or did the magnet fall off? 
-plot2HallFunction(SN118)
-remove(SN118)
+SN118 = loadComboGape('SN118') \# Maybe died around Aug 9? Or did the
+magnet fall off? plot2HallFunction(SN118) remove(SN118)
 
-SN187 = loadComboGape('SN187')
-plot2HallFunction(SN187)
-remove(SN187)
+SN187 = loadComboGape('SN187') plot2HallFunction(SN187) remove(SN187)
 
-SN161 = loadComboGape('SN161')
-plot2HallFunction(SN161)
-remove(SN161)
+SN161 = loadComboGape('SN161') plot2HallFunction(SN161) remove(SN161)
 
-SN157 = loadComboGape('SN157')  # Bad sensor (magnetic field strength saturated probably)
-plot2HallFunction(SN157)
-remove(SN157)
+SN157 = loadComboGape('SN157') \# Bad sensor (magnetic field strength
+saturated probably) plot2HallFunction(SN157) remove(SN157)
 
-SN144 = loadComboGape('SN144')
-plot2HallFunction(SN144)
-remove(SN144)
+SN144 = loadComboGape('SN144') plot2HallFunction(SN144) remove(SN144)
 
-SN159 = loadComboGape('SN159') # Different looking pattern than most others
-plot2HallFunction(SN159)
-remove(SN159)
+SN159 = loadComboGape('SN159') \# Different looking pattern than most
+others plot2HallFunction(SN159) remove(SN159)
 
-SN148 = loadComboGape('SN148')
-plot2HallFunction(SN148)
-remove(SN148)
+SN148 = loadComboGape('SN148') plot2HallFunction(SN148) remove(SN148)
 
-SN133 = loadComboGape('SN133')
-plot2HallFunction(SN133)
-remove(SN133)
+SN133 = loadComboGape('SN133') plot2HallFunction(SN133) remove(SN133)
 
-SN104 = loadComboGape('SN104')
-plot2HallFunction(SN104)
-remove(SN104)
+SN104 = loadComboGape('SN104') plot2HallFunction(SN104) remove(SN104)
 
-SN107 = loadComboGape('SN107')
-plot2HallFunction(SN107)
-remove(SN107)
+SN107 = loadComboGape('SN107') plot2HallFunction(SN107) remove(SN107)
 
-SN111 = loadComboGape('SN111')
-plot2HallFunction(SN111)
-remove(SN111)
+SN111 = loadComboGape('SN111') plot2HallFunction(SN111) remove(SN111)
 
-SN113 = loadComboGape('SN113')
-plot2HallFunction(SN113)
-remove(SN113)
+SN113 = loadComboGape('SN113') plot2HallFunction(SN113) remove(SN113)
 
-SN114 = loadComboGape('SN114')
-plot2HallFunction(SN114)
-remove(SN114)
+SN114 = loadComboGape('SN114') plot2HallFunction(SN114) remove(SN114)
 
-SN115 = loadComboGape('SN115')
-plot2HallFunction(SN115)
-remove(SN115)
+SN115 = loadComboGape('SN115') plot2HallFunction(SN115) remove(SN115)
 
-SN120 = loadComboGape('SN120')
-plot2HallFunction(SN120)
-remove(SN120)
+SN120 = loadComboGape('SN120') plot2HallFunction(SN120) remove(SN120)
 
-SN123 = loadComboGape('SN123')
-plot2HallFunction(SN123)
-remove(SN123)
+SN123 = loadComboGape('SN123') plot2HallFunction(SN123) remove(SN123)
 
-SN130 = loadComboGape('SN130')
-plot2HallFunction(SN130)
-remove(SN130)
+SN130 = loadComboGape('SN130') plot2HallFunction(SN130) remove(SN130)
 
-SN136 = loadComboGape('SN136')
-plot2HallFunction(SN136)
-remove(SN136)
+SN136 = loadComboGape('SN136') plot2HallFunction(SN136) remove(SN136)
 
-SN138 = loadComboGape('SN138')
-plot2HallFunction(SN138)
-remove(SN138)
+SN138 = loadComboGape('SN138') plot2HallFunction(SN138) remove(SN138)
 
-SN141 = loadComboGape('SN141')
-plot2HallFunction(SN141)
-remove(SN141)
+SN141 = loadComboGape('SN141') plot2HallFunction(SN141) remove(SN141)
 
-SN143 = loadComboGape('SN143')
-plot2HallFunction(SN143)
-remove(SN143)
+SN143 = loadComboGape('SN143') plot2HallFunction(SN143) remove(SN143)
 
-SN145 = loadComboGape('SN145')
-plot2HallFunction(SN145)
-remove(SN145)
+SN145 = loadComboGape('SN145') plot2HallFunction(SN145) remove(SN145)
 
-SN147 = loadComboGape('SN147')
-plot2HallFunction(SN147)
-remove(SN147)
+SN147 = loadComboGape('SN147') plot2HallFunction(SN147) remove(SN147)
 
-SN150 = loadComboGape('SN150')
-plot2HallFunction(SN150)
-remove(SN150)
+SN150 = loadComboGape('SN150') plot2HallFunction(SN150) remove(SN150)
 
-SN152 = loadComboGape('SN152')
-plot2HallFunction(SN152)
-remove(SN152)
+SN152 = loadComboGape('SN152') plot2HallFunction(SN152) remove(SN152)
 
-SN154 = loadComboGape('SN154')
-plot2HallFunction(SN154)
-remove(SN154)
+SN154 = loadComboGape('SN154') plot2HallFunction(SN154) remove(SN154)
 
-SN156 = loadComboGape('SN156')
-plot2HallFunction(SN156)
-remove(SN156)
+SN156 = loadComboGape('SN156') plot2HallFunction(SN156) remove(SN156)
 
-SN160 = loadComboGape('SN160')
-plot2HallFunction(SN160)
-remove(SN160)
+SN160 = loadComboGape('SN160') plot2HallFunction(SN160) remove(SN160)
 
-SN164 = loadComboGape('SN164')
-plot2HallFunction(SN164)
-remove(SN164)
+SN164 = loadComboGape('SN164') plot2HallFunction(SN164) remove(SN164)
 
-SN167 = loadComboGape('SN167')
-plot2HallFunction(SN167)
-remove(SN167)
+SN167 = loadComboGape('SN167') plot2HallFunction(SN167) remove(SN167)
 
-SN170 = loadComboGape('SN170')
-plot2HallFunction(SN170)
-remove(SN170)
+SN170 = loadComboGape('SN170') plot2HallFunction(SN170) remove(SN170)
 
-SN174 = loadComboGape('SN174')
-plot2HallFunction(SN174)
-remove(SN174)
+SN174 = loadComboGape('SN174') plot2HallFunction(SN174) remove(SN174)
 
-SN176 = loadComboGape('SN176')
-plot2HallFunction(SN176)
-remove(SN176)
+SN176 = loadComboGape('SN176') plot2HallFunction(SN176) remove(SN176)
 
-SN184 = loadComboGape('SN184')
-plot2HallFunction(SN184)
-remove(SN184)
+SN184 = loadComboGape('SN184') plot2HallFunction(SN184) remove(SN184)
 
-SN194 = loadComboGape('SN194')
-plot2HallFunction(SN194)
-remove(SN194)
+SN194 = loadComboGape('SN194') plot2HallFunction(SN194) remove(SN194)
 
-SN196 = loadComboGape('SN196')
-plot2HallFunction(SN196)
-remove(SN196)
-```
+SN196 = loadComboGape('SN196') plot2HallFunction(SN196) remove(SN196)
+
+```         
 
 ```{#r convertHalltobinary attempts}
 #make for loop that converts Hall values to 0s if between 0-40, and 1 if between 70-100 percentile. Use allgapemeta
@@ -2001,27 +2056,32 @@ SN104=SN104 %>% mutate(binary =
                      case_when(quartile == 1 ~ "1", 
                                quartile == 2&3 ~ "NA",
                                quartile == 4 ~ "2"))
-
 ```
 
-```{#r Extracode}
-#concatgapefiles works outside of for loop 
-#gapedat = ConcatGapeFiles(gapecombo, myTimeZone = 'UTC', verbose = FALSE)
+\`\`\`{#r Extracode} #concatgapefiles works outside of for loop #gapedat
+= ConcatGapeFiles(gapecombo, myTimeZone = 'UTC', verbose = FALSE)
 
-#for(i in (serialnumber)){
- # list.files(dir(path=paste0(NewportDir, WestcliffEelgrassDir,i), full.names = #TRUE, pattern=paste0(i,"_GAPE.csv")))}
+#for(i in (serialnumber)){ \# list.files(dir(path=paste0(NewportDir,
+WestcliffEelgrassDir,i), full.names = #TRUE,
+pattern=paste0(i,"\_GAPE.csv")))}
 
-#for(i in (serialnumber)){
-#  list.files(path=paste0(NewportDir, #WestcliffEelgrassDir,i),pattern=paste0(i,"_GAPE.csv"))}
+#for(i in (serialnumber)){ \# list.files(path=paste0(NewportDir,
+#WestcliffEelgrassDir,i),pattern=paste0(i,"\_GAPE.csv"))}
 
-#gapecombo=paste0(ConcatGapeFiles('../data', myTimeZone="UTC",verbose=FALSE),serialnumber[i],"combogape.csv")
+#gapecombo=paste0(ConcatGapeFiles('../data',
+myTimeZone="UTC",verbose=FALSE),serialnumber[i],"combogape.csv")
 
-#use "serialnumber" (every row is serial number to be processed) of all serial numbers in field. in this directory, look for folder "SN107" then get list of all gape files in that folder and process them. with dir function can find folder names using something like pattern= "SN107". 
-#make for loop go through vector. 
-#at end get calculated ranges for sensors. 
-#paste0(gapeDir(###place where it saves),serialnumber[i],"combogape.csv")
-#if there's no folder for serial number (haven't downloaded data yet) then have it end the loop and go back to the start and try the next number
-```
+#use "serialnumber" (every row is serial number to be processed) of all
+serial numbers in field. in this directory, look for folder "SN107" then
+get list of all gape files in that folder and process them. with dir
+function can find folder names using something like pattern= "SN107".
+#make for loop go through vector. #at end get calculated ranges for
+sensors. #paste0(gapeDir(###place where it
+saves),serialnumber[i],"combogape.csv") #if there's no folder for serial
+number (haven't downloaded data yet) then have it end the loop and go
+back to the start and try the next number
+
+```         
 
 ```{#r extraconcatGapeFunction}
 #' Concatenate multiple daily gape files into one data frame
@@ -2032,73 +2092,70 @@ SN104=SN104 %>% mutate(binary =
 #'  @return A data frame consisting of the input files concatenated and sorted chronologically. 
 
 # ConcatGapeFiles <- function(filenames, myTimeZone = 'UTC',verbose=FALSE){
-# 	if(verbose){
-# 		pb = txtProgressBar(min=0,max = length(filenames), style = 3)
-# 	}
+#   if(verbose){
+#       pb = txtProgressBar(min=0,max = length(filenames), style = 3)
+#   }
 # # Open the raw data files and concatenate them.
-# 	for (f in 1:length(filenames)){
-# 		if(verbose) setTxtProgressBar(pb,f)
-# 		
-# 		dattemp = read.csv(filenames[f])
-# 		###########################
-# 		# Columns:
-# 		# POSIXt: elapsed seconds since 1970-01-01 00:00:00 (unix epoch) in whatever timezone the sensor was set to during deployment. Presumably UTC
-# 		# DateTime: human-readable character date and time, in whatever timezone the sensor was set to during deployment 
-# 		# Hallx: Raw analog to digital converter value for the indicated Hall effect channel. There are 16 channels (numbered 0-15) on the GapeTracker
-# 		# Battery.V:  Supply battery voltage
-# 		#########################
-# 		# Convert the DateTime column to a POSIXct object.
-# 		dattemp$DateTime = as.POSIXct(dattemp$DateTime, tz=myTimeZone) 	
-# 		
-# 		
-# 		# Concatenate the data files. 
-# 		if (f == 1){
-# 			dat = dattemp
-# 		} else if (f > 1){
-# 			dat = rbind(dat,dattemp)
-# 		}
-# 	}
-# 	if(verbose) close(pb)
+#   for (f in 1:length(filenames)){
+#       if(verbose) setTxtProgressBar(pb,f)
+#       
+#       dattemp = read.csv(filenames[f])
+#       ###########################
+#       # Columns:
+#       # POSIXt: elapsed seconds since 1970-01-01 00:00:00 (unix epoch) in whatever timezone the sensor was set to during deployment. Presumably UTC
+#       # DateTime: human-readable character date and time, in whatever timezone the sensor was set to during deployment 
+#       # Hallx: Raw analog to digital converter value for the indicated Hall effect channel. There are 16 channels (numbered 0-15) on the GapeTracker
+#       # Battery.V:  Supply battery voltage
+#       #########################
+#       # Convert the DateTime column to a POSIXct object.
+#       dattemp$DateTime = as.POSIXct(dattemp$DateTime, tz=myTimeZone)  
+#       
+#       
+#       # Concatenate the data files. 
+#       if (f == 1){
+#           dat = dattemp
+#       } else if (f > 1){
+#           dat = rbind(dat,dattemp)
+#       }
+#   }
+#   if(verbose) close(pb)
 # # Reorder the concatenated data frame by the DateTime values in case the files
 # # were not fed in in chronological order
-# 	dat = dat[order(dat$DateTime),]
+#   dat = dat[order(dat$DateTime),]
 # }
 ```
 
-```{#rextra convert hall to hallpercent }
-#gapeSN = 'SN21'  
+\`\`\`{#rextra convert hall to hallpercent } #gapeSN = 'SN21'\
 #gape.perc = gapedat
 
 #converts Hall column to 0-100 values so now on scale of 1-100
-	#currentChannel = colnames(gapedat)[i]
-	# Locate the channel number from currentChannel name
-	#chNumRegex = regexpr('[0-9]+', currentChannel)
-	# Extract the channel number
-	#chNum = as.numeric(substr(currentChannel,
-				#	start=chNumRegex,
-				#	stop=(chNumRegex+attr(chNumRegex,'match.length')-1)))
-	# Generate the regression fit for the relationship between curvature parameter
-	# 'c' and the log-transform of 'b'.
-  #chNum=1
-	#cRegress = cRegressEstimate(gapeSN, chNum,gapecalibfile)
-	# Convert the Hall effect values into estimated percent gape (0-100%)
-	#gape.perc[,"hallpercent"] = calcPercentGapeNLME(gapedat[,4], cRegress, 
-	#		percentileLim = c(0.01,0.95))
-	 
+#currentChannel = colnames(gapedat)[i] \# Locate the channel number from
+currentChannel name #chNumRegex = regexpr('[0-9]+', currentChannel) \#
+Extract the channel number #chNum = as.numeric(substr(currentChannel, \#
+start=chNumRegex, \#
+stop=(chNumRegex+attr(chNumRegex,'match.length')-1))) \# Generate the
+regression fit for the relationship between curvature parameter \# 'c'
+and the log-transform of 'b'. #chNum=1 #cRegress =
+cRegressEstimate(gapeSN, chNum,gapecalibfile) \# Convert the Hall effect
+values into estimated percent gape (0-100%) #gape.perc[,"hallpercent"] =
+calcPercentGapeNLME(gapedat[,4], cRegress, \# percentileLim =
+c(0.01,0.95))
+
 # The output data frame LPLgape.pc should now contain estimated percentage
-# gape values for each oyster at each time point. 
+
+# gape values for each oyster at each time point.
 
 # Save a copy of the data frame that can be reopened for quicker execution
+
 # of this script instead of re-running the whole raw data processing
-#write.csv(gape.perc,
-#		file = paste0(gapeDir,SN107combogapefile),
-#		row.names=FALSE)
+
+#write.csv(gape.perc, \# file = paste0(gapeDir,SN107combogapefile), \#
+row.names=FALSE)
 
 # Create a decimated copy of the data frame (1 sample per minute) to make it
-# easier to handle
-#LPLgape.perc.dec = LPLgape.perc[seq(1,nrow(LPLgape.perc), by = 12),]
-#write.csv(LPLgape.perc.dec,
-#		file = paste0(gapeDir,LPL1minGapeFile)
-#		row.names=FALSE)
-```
 
+# easier to handle
+
+#LPLgape.perc.dec = LPLgape.perc[seq(1,nrow(LPLgape.perc), by = 12),]
+#write.csv(LPLgape.perc.dec, \# file = paste0(gapeDir,LPL1minGapeFile)
+\# row.names=FALSE) \`\`\`

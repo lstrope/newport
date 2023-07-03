@@ -29,6 +29,7 @@ showcode = FALSE # Set true to print out all R code in final document
 library(signal)
 library(pracma)
 library(forecast)
+library(lubridate)
 ```
 
 #import files
@@ -43,7 +44,7 @@ localpath = '../data/'  # Lauren's path
 hrpath = '../data/Newport_SSINP/alldata/'
 comboheartpath = paste0(localpath,'Newport_SSINP/combinedheart/')
 heartoutputpath = paste0(localpath,'Newport_SSINP/heart_rates/')
-
+NewportDir = paste0(localpath,'Newport_SSINP/')
 
 #meta file with serial numbers
 metafilePath = paste0(localpath,'Newport_SSINP/metadata/')
@@ -98,7 +99,6 @@ loadFieldMaintData <- function(filename,timezone = 'UTC'){
 
 ```
 
-
 #import metadata
 ```{r}
 #import csv metadata_with edits. 
@@ -110,14 +110,16 @@ maintenance=loadFieldMaintData(filename = (paste0(metafilePath,"lowtide_metadata
 oystercode = unique(metafile[,'Code'])
 ```
 
-```{r importConcatenateRawHeartFiles, echo=showcode, cache=TRUE}
+#create combined heart files
+```{r importConcatenateRawHeartFiles, echo=showcode, eval=FALSE}
 # Loop through all oysters and 
 # Ideally you only need to run this once in a while as new data come 
 # in from the field. Otherwise, use the output files from this chunk
 # in the later analysis steps.
 ##################################################################
 serialnumber=unique(metafile[,1])
-oystercode = unique(metafile[,'Code'])
+oystercode = unique(metafile[,'Code']) #make list of all oyster codes 
+oystercode=oystercode[-c(1:99)] #manually change which codes are combined 
 options(digits.secs = 3)
 
 
@@ -168,8 +170,7 @@ for (oy in (oystercode) ){
 			}
 			
 			colnames(temp) = hdr
-			temp$DateTime = as.POSIXct(temp$DateTime, tz = 'UTC')
-			
+			temp$DateTime  = as.POSIXct(temp$DateTime, tz = 'UTC', format="%Y-%m-%d %H:%M:%S")
 			# The original data files only had a timestamp every 240 rows
 			# at the start and end of a 240-sample period. It might be useful
 			# to fill in the intervening time values
@@ -246,7 +247,7 @@ close(pb)
 
 Fs = 0.125 # 8Hz sampling rate, sampling interval = 0.125 seconds
 # Step through 1 minute at a time
-mytime = as.POSIXct('2022-07-25 10:50:00',tz='UTC')
+mytime = as.POSIXct('2022-07-25 10:50:00',tz='UTC', format="%Y-%m-%d %H:%M:%S")
 mysensor = 'IR'
 t1 = which.min(abs(Heart$DateTime - mytime)) #compares all times to "my time" to find "my time". T1 gives index for "smallest difference". 
 chunklength = 240 # number of samples to use
@@ -405,6 +406,7 @@ lines(y) #add smooth version in black on top of graph
 
 ``` 
 
+#getBPM function
 ```{r getBPMfunction,echo=showcode}
 # A function to convert raw heartbeat timeseries into estimates of heart rate
 # (beats per minute). This function uses the filtfilt routine from the signal
@@ -490,8 +492,10 @@ getBPM = function(x,t1 = 1, sensor = 'IR',chunklength=240,
 
 	# Add milliseconds onto the timestamps
 	temp$DateTimeMS = temp$DateTime
-	diffs = diff(temp$startMillis) / 1000
-	temp$DateTimeMS[2:nrow(temp)] = temp$DateTimeMS[1] + cumsum(diffs)
+	# create a new set of timestamps that have millisecond values attached
+	myvec=vector(mode="numeric", length=chunklength-1)
+	myvec[1:length(myvec)]=Fs
+	temp$DateTimeMS[2:nrow(temp)] = temp$DateTimeMS[1] + cumsum(myvec)
 
 	
 	# Test if there are any NAs in the heart rate values, if there are not
@@ -618,7 +622,7 @@ getBPM = function(x,t1 = 1, sensor = 'IR',chunklength=240,
 			}
 			points(temp$DateTimeMS[pracPeaks[,2]], y = pracPeaks[,1], col = 4, pch = 19)
 			mtext(side = 2, text = 'Detrended IR signal', line = 2.5, cex = 1)
-			mtext(side = 1, line = 3, text = paste(sensor, strftime(temp$DateTimePST[1])), cex = 0.8, adj = 1)
+			mtext(side = 1, line = 3, text = paste(sensor, strftime(temp$DateTime[1], tz="PST8PDT")), cex = 0.8, adj = 1)
 			mtext(side = 3, line = 3, text = paste0('pracma bpm: ', BPMprac))
 			mtext(side = 3, line = 2, text = paste0('fft bpm: ', BPMfft))
 			mtext(side = 3, line = 1, text = paste0('forecast filtered bpm: ', round(BPMforecast,1)))
@@ -684,6 +688,7 @@ getBPM = function(x,t1 = 1, sensor = 'IR',chunklength=240,
 
 ```
 
+#extractRawIR function
 ```{r cleanupRawHeartForPlotting, echo=showcode}
 # A function for grabbing a chunk of 300 samples at a given time stamp and 
 # returning the detrended raw IR data, for plotting purposes primarily. 
@@ -770,160 +775,9 @@ extractRawIRchunk = function(tstamp, rawHeartdf, mysensor, chunklength = 300)
 
 ```
 
-
-
-
-
-
-
-
-```{r getBPMfunctionOldVersion}
-getBPMold = function(x,t1 = 1, sensor = 'Sensor1IR',chunklength=300, 
-		lowband = 1/60, 
-		highband = 1/10, 
-		#amplitudeThreshold = 60,
-		Fs = 0.125)
-{
-	# Test if there are any NAs in the heart rate values, if there are not
-	# then proceed with the filtering and heart rate determination
-	if ( length( which( is.na(temp[,sensor]) ) ) == 0){
-		
-		# Detrend the heartrate readings
-		detrendedIR = pracma::detrend(temp[,sensor])	
-		# Next look at the detrended values and look for spurious low values
-		# For instance, a good heart signal might oscillate between -200 & +300
-		# in the detrended data, and a spurious value might suddenly drop to 
-		# -6000. 
-		# Calculate the standard deviation of the data set, and then find values
-		# that are more than 3 SD away from the mean (which should be ~zero in the
-		# detrended data)
-		spuriousVals = which(abs(detrendedIR) > (3*sd(detrendedIR)) )
-		if ( length(spuriousVals) > 0) {
-			# Convert to NAs 
-			temp[spuriousVals,mysensor] = NA
-			
-			for (i in 1:length(spuriousVals)){
-				indx = spuriousVals[i]  # Get the row index for this spurious value
-				if (indx == 1) {
-		 temp=temp[2:nrow(temp),]
-		  } else if(indx==2){
-		    temp=temp[2:nrow(temp),]
-		  } else if(indx>2){
-		    # Get the row index for this spurious value
-			# Replace the spurious value with the average of the values immediately
-			# before and after the spurious value
-      #temp[indx,sensor] = mean(c(temp[indx-1,sensor],temp[indx+1,sensor]))
-			temp[indx,mysensor] = mean(temp[(indx-2):(indx+2),mysensor], na.rm=TRUE)
-		  }
-			}
-		}
-		rm(spuriousVals)
-
-		
-		# With the spurious values replaced by interpolated values, re-run the 
-		# detrending routine
-		detrendedIR = pracma::detrend(temp[,sensor])
-	} else {
-		# If there were NAs, just define detrendedIR as NA so that later 
-		# operations skip over this chunk of data
-		detrendedIR = NA
-	}
-
-	
-
-	if (length(which(is.na(detrendedIR))) == 0) {
-
-		# Define a butterworth filter
-	# Consider using the bandpass filter rather than just a lowpass filter
-	# because of the tendency for the IR heartrate signal to drift up and 
-	# down in relation to ambient light, which tends to induce low-frequency
-	# shifts that then fool the spectral analysis routines when trying to 
-	# identify the dominant frequency
-		bf = signal::butter(3,W = c(lowband, highband), type = 'pass')
-		
-		# Apply the filter to the detrended data chunk
-		y = filtfilt(bf, x = detrendedIR)
-		# Calculate the spectrum of the filtered data
-		myfft2 = spectrum(y, plot = FALSE)
-		# Take the peak frequency from the spectrum, divide by sampling
-		# rate to convert to cycles per second
-		mypeakfreq = myfft2$freq[which.max(myfft2$spec)] / Fs
-		# Multiply by 60 seconds to get cycles (beats) per minute
-		BPMfft = 60 * mypeakfreq
-		# Calculate amplitude of filtered signal to denote weak or noisy signals
-		#amp = range(y)[2] - range(y)[1]
-		
-		## Plot the raw detrended signal
-#	plot(temp$DateTimeMS, detrendedIR, type = 'l', 
-#			main = paste0("Amplitude = ",round(amp,1),
-#					', BPM = ', bpm), 
-#			las = 1) 
-#	if (amp > 60){
-#		lines(temp$DateTimeMS,y, col = 3, lwd = 2) # add the filtered signal
-#	} else if (amp <= 60) {
-#		lines(temp$DateTimeMS,y, col = 2, lwd = 2) # add the filtered signal	
-#		warning('Garbage signal')
-#	}
-		# Use function from package 'forecast', returns peak period (not freq)
-		forecastPeriod = forecast::findfrequency(y)  
-		forecastFreq = 1/forecastPeriod # convert period to frequency
-		forecastBPM = forecastFreq * 60 * 8 # convert frequency to beats per 
-		# minute, based on the fact that the sampling rate is 10Hz, and there are
-		# 60 seconds in a minute
-		#	mtext(side = 3, text = paste0('Forecast BPM: ',round(forecastBPM,1)))
-		# Use pracma package to find peaks. Note that at slower heart rates
-		# this function tends to find the sub-peaks (akin to a P or T peak in a
-		# human ECG trace) rather than just the main peaks (R peaks on a human). 
-		# This happens based on what the bandpass filter lets through. 
-#	res = pracma::findpeaks(x = y, nups = 5, minpeakdistance = 10)
-#	points(temp$DateTimeMS[res[,2]], y = res[,1], col = 4, pch = 19)
-		# Print the estimated bpm from the pracma::findpeaks routine, but 
-		# you need to double the number of peaks to get bpm if your time series
-		# is only 30 seconds long
-#	mtext(side = 3, line = 3, text = paste0('pracma bpm: ', nrow(res)*2))
-		
-		# Calculate the difference between the estimated heart rates from the 
-		# spectrum fft routine and the forecast::findfrequency routine. A 
-		# small value indicates good agreement
-		BPMagreeQuality = ceiling(abs(BPMfft - forecastBPM))
-		# Set a flag for cases where the forecast:findfrequency estimate is 
-		# extremely large, which happens when it can't find a clear heart signal
-		forecastBPMflag = ifelse(forecastBPM > amplitudeThreshold, 'FAIL','OK')
-		# Set a flag for cases where the detrended/filtered signal has a very
-		# small amplitude, signaling that there may be no good heartbeat signal 
-		WeakSignalFlag = ifelse(amp < amplitudeThreshold, 'FAIL','OK')
-		
-		
-		resultsList = list(DateTimePST = temp$DateTimePST[1],
-				Sensor = sensor,
-				BPMfft = round(BPMfft,1),
-				forecastBPM = round(forecastBPM,1),
-				BPMagreeQuality = BPMagreeQuality,
-				forecastBPMflag = forecastBPMflag,
-				WeakSignalFlag = WeakSignalFlag)
-				#FilteredAmplitude = round(amp,1))
-	} else if (length( which( is.na(temp[,sensor]) ) ) > 0) {
-		# Handle the case where there are NAs in the data chunk that prevent
-		# the filtering and fft routines
-		resultsList = list(DateTimePST = temp$DateTimePST[1],
-				Sensor = sensor,
-				BPMfft = NA,
-				forecastBPM = NA,
-				BPMagreeQuality = NA,
-				forecastBPMflag = 'FAIL',
-				WeakSignalFlag = 'FAIL')
-				#FilteredAmplitude = NA)
-	}
-	
-
-	return(resultsList)
-}
-
-```
-
 ```{r exampleHeartPlot, echo=showcode,dev='png',fig.width=5,fig.height=5,res=300}
 
-mytime = as.POSIXct('2022-07-28 00:20:00',tz='UTC')
+mytime = as.POSIXct('2022-07-28 00:20:00',tz='UTC', format="%Y-%m-%d %H:%M:%S")
 mysensor='IR'
 t1 = which.min(abs(Heart$DateTimePST - mytime))
 chunklength = 300
@@ -1077,10 +931,10 @@ mtext(side = 2, text = 'Detrended IR signal', line = 4, cex = mycex)
 # an oyster code and then process that oyster's raw IR data
 options(digits.secs = 3) # used to preserve milliseconds values in time stamps
 
-oy = 'D.E.2.1028'
+oy = 'W.E.5.1002'
 
 Heart = read.csv(paste0(comboheartpath,oy,'_comboheart.csv'))
-Heart$DateTime = as.POSIXct(Heart$DateTime, tz = 'UTC')
+Heart$DateTime = as.POSIXct(Heart$DateTime, tz = 'UTC', format="%Y-%m-%d %H:%M:%S")
 
 
 # Figure out where the start of each 30-second sampling bout should be. 
@@ -1093,8 +947,10 @@ bigsteps = c(1,bigsteps) # A set of row indices in Heart for each new sample per
 
 pb = txtProgressBar(min = 0, max = length(bigsteps), style = 3)
 
-mylowband = 1/100  # filtering 
-myhighband = 1/15  # filtering - changing this has the largest effect, start around 1/15
+# mylowband- filters low freq signals out, gets rid of slow signals
+mylowband = 1/200  # filtering - ran some at 1/100 as a starting point. 
+#myhighband-get rid of high freq noise so you just get normal peaks
+myhighband = 1/10  # filtering - changing this has the largest effect, start around 1/15
 myThreshold = 4 # Minimum agreement between BPM estimates
 
 for (i in 1:length(bigsteps)){
@@ -1155,7 +1011,6 @@ onKeybd <- function(key)
 
 ```
 
-
 ```{r QAvisualInspectionSetup, echo=showcode, eval = evalAll}
 # Go through the results lists and visually inspect timepoints where the
 # heart rate was flagged as questionable. This may be a one-time thing. Run the
@@ -1167,11 +1022,11 @@ onKeybd <- function(key)
 
 mysensor = 'IR'
 
-oy = 'D.E.2.1028'
+oy = 'W.E.5.1002'
 
 # Open up the concatenated heart data for this oyster
 Heart = read.csv(paste0(comboheartpath,oy,'_comboheart.csv'))
-Heart$DateTime = as.POSIXct(Heart$DateTime, tz = 'UTC')
+Heart$DateTime = as.POSIXct(Heart$DateTime, tz = 'UTC', format="%Y-%m-%d %H:%M:%S")
 
 # Open up the output file from the heart rate auto-processing routine
 if (length(dir(path = heartoutputpath, 
@@ -1185,7 +1040,7 @@ if (length(dir(path = heartoutputpath,
 
 
 # Convert DateTime to POSIX
-Heartbpm$DateTime = as.POSIXct(Heartbpm$DateTime, tz = 'UTC')
+Heartbpm$DateTime = as.POSIXct(Heartbpm$DateTime, tz = 'UTC', format="%Y-%m-%d %H:%M:%S")
 # The heart beat estimates and quality flags are stored in Heartbpm
 
 
@@ -1199,10 +1054,13 @@ BPMqualityThreshold = 4
 # between 2 of the methods is greater than the BPMqualityThreshold
 # and the sensor hasn't been QA'd. This will catch rows with 
 # weak signals though, which may be too many.
- checkTheseRows = which( (Heartbpm$BPMagreeQuality.fft.forecast > BPMqualityThreshold | 
- 				Heartbpm$BPMagreeQuality.prac.forecast > BPMqualityThreshold | 
- 				Heartbpm$BPMagreeQuality.prac.fft > BPMqualityThreshold ) & 
- 			Heartbpm$QA == 'FALSE')
+# checkTheseRows = which( (Heartbpm$BPMagreeQuality.fft.forecast > BPMqualityThreshold | 
+ #				Heartbpm$BPMagreeQuality.prac.forecast > BPMqualityThreshold | 
+ 	#			Heartbpm$BPMagreeQuality.prac.fft > BPMqualityThreshold ) & 
+ 	#		Heartbpm$QA == 'FALSE')
+ # give every row where it's not all NAs, include good HR estimates and ones that
+ # need to be QAd
+ checkTheseRows = which( (!is.na(Heartbpm$BPMfft)) & (!is.na(Heartbpm$BPMforecast)))
 
 # This version requires the WeakSignalFlag field to be OK instead
 # of FAIL. Useful in cases where large numbers (thousands) of 
@@ -1229,10 +1087,9 @@ if (exists('ManualStart')){
 
 ```
 
-
 ```{r QAmanualVisualInspection,echo=showcode,eval=evalAll}
 # On a Mac in Rstudio, before you run this chunk, run the following on the command line:
-# X11(type='Xlib')
+X11(type='Xlib')
 # On a Windows machine in Rstudio, you may instead need to run this line:
 # dev.new()
 # The goal is to open a plotting window outside of Rstudio that can accept user input
@@ -1241,7 +1098,8 @@ if (exists('ManualStart')){
 
 quitFlag = FALSE
 skipFlag = FALSE
-ylims = c(-50,50)
+#ylims = c(-100,100)
+ylims=NULL
 amplitudeThresh = 10
 chunkLen = 240
 myFs = 0.125
@@ -1256,18 +1114,19 @@ while (!quitFlag){
 	
 	# Get the time stamp of the current row
 	tstamp = sensor$DateTime[thisrow]
-	
+	currentBPM=sensor$finalBPM[thisrow]
+	QAd=sensor$QA[thisrow]
 	t1 = which.min(abs(tstamp - Heart$DateTime))
 	# Also get the rows for the sample periods before and after the target minute
 	t0 = which.min(abs( (tstamp-300) - Heart$DateTime))
 	t2 = which.min(abs( (tstamp+240) - Heart$DateTime))
-	HighBandDenom = 15  # Initial value should be 15 to make a 1/15 highband cutoff
+	HighBandDenom = 25  # Initial value should be 15 to make a 1/15 highband cutoff
 	# Make the first version of the plot
 	op = par()
 	par(mfcol = c(1,3), mar = c(5,5,5,1))
 	# Plot the prior minute's data for context
 	junk = getBPM(Heart,t1 = t0, sensor = mysensor, chunklength = chunkLen,
-			lowband = 1/100, highband = 1/15, amplitudeThreshold = amplitudeThresh,
+			lowband = 1/200, highband = 1/10, amplitudeThreshold = amplitudeThresh,
 			maxBPM = 50, Fs = myFs, plot = TRUE, myYlims = ylims)
 	if (is.na(junk$BPMfft) & is.na(junk$BPMforecast) & is.na(junk$BPMpeaks)){
 		# If all of these were NA, there's nothing to plot
@@ -1279,6 +1138,10 @@ while (!quitFlag){
 	res1 = getBPM(Heart,t1 = t1, sensor = mysensor, chunklength = chunkLen,
 			lowband = 1/100, highband = 1/HighBandDenom, amplitudeThreshold = amplitudeThresh,
 			maxBPM = 50, Fs = myFs, plot = TRUE, myYlims = ylims)
+	#Show currently recorded final BPM (may be NA)
+	mtext(side=3, line=-2, text=paste("Recorded BPM: ", currentBPM), adj=0)
+	#show if previous chunk was QAd 
+	mtext(side=3, line=-3, text=paste("Previous QA: ", ifelse(QAd==TRUE, "TRUE", "FALSE")), adj=0)
 	# Sanity check, if nothing gets plotted then we need to skip
 	if (is.na(res1$BPMfft) & is.na(res1$BPMforecast) & is.na(res1$BPMpeaks)){
 		# If all of these were NA, there's nothing to plot
@@ -1384,7 +1247,7 @@ while (!quitFlag){
 			quitFlag = TRUE # Set TRUE to exit outer while loop
 		} else if (keyPressed == 's') {
 			# Write the updated data back into the main data frame
-			surfHeartbpm[which(surfHeartbpm$Sensor == mysensor),] = sensor
+			Heartbpm[which(Heartbpm$Sensor == mysensor),] = sensor
 			# Save the data frame to a csv file
 			write.csv(Heartbpm, file = paste0(heartoutputpath,oy,'_bpm_QA.csv'), 
 					row.names=FALSE)
@@ -1437,7 +1300,7 @@ if(userInput){
 ```{r openHeartBPM,echo=showcode}
 # Open the re-processed beats per minute estimates from surface board
 surfHeartbpm = read.csv(paste0(outputDirCSVs,'SurfaceHeart_SN04_bpm.csv'))
-surfHeartbpm$DateTimePST = as.POSIXct(surfHeartbpm$DateTimePST, tz = 'etc/GMT+8')
+surfHeartbpm$DateTimePST = as.POSIXct(surfHeartbpm$DateTimePST, tz = 'etc/GMT+8', format="%Y-%m-%d %H:%M:%S")
 surfHeartbpm$Sensor = factor(surfHeartbpm$Sensor)
 surfHeartbpm$forecastBPMflag = factor(surfHeartbpm$forecastBPMflag)
 surfHeartbpm$WeakSignalFlag = factor(surfHeartbpm$WeakSignalFlag)
@@ -1445,7 +1308,7 @@ surfHeartbpm$Species = factor(surfHeartbpm$Species)
 surfHeartbpm$Treatment = factor(surfHeartbpm$Treatment)
 
 botHeartbpm = read.csv(paste0(outputDirCSVs,'BottomHeart_SN05_bpm.csv'))
-botHeartbpm$DateTimePST = as.POSIXct(botHeartbpm$DateTimePST, tz = 'etc/GMT+8')
+botHeartbpm$DateTimePST = as.POSIXct(botHeartbpm$DateTimePST, tz = 'etc/GMT+8', format="%Y-%m-%d %H:%M:%S")
 botHeartbpm$Sensor = factor(botHeartbpm$Sensor)
 botHeartbpm$forecastBPMflag = factor(botHeartbpm$forecastBPMflag)
 botHeartbpm$WeakSignalFlag = factor(botHeartbpm$WeakSignalFlag)
@@ -1526,5 +1389,150 @@ loessFunc = function(x,y, col = 1, lwd = 2, pch = '.', cex = 1, span = 0.75){
 #			col = cols, border = NA)
 #	box()
 #}
+
+```
+
+
+```{r getBPMfunctionOldVersion}
+getBPMold = function(x,t1 = 1, sensor = 'Sensor1IR',chunklength=300, 
+		lowband = 1/60, 
+		highband = 1/10, 
+		#amplitudeThreshold = 60,
+		Fs = 0.125)
+{
+	# Test if there are any NAs in the heart rate values, if there are not
+	# then proceed with the filtering and heart rate determination
+	if ( length( which( is.na(temp[,sensor]) ) ) == 0){
+		
+		# Detrend the heartrate readings
+		detrendedIR = pracma::detrend(temp[,sensor])	
+		# Next look at the detrended values and look for spurious low values
+		# For instance, a good heart signal might oscillate between -200 & +300
+		# in the detrended data, and a spurious value might suddenly drop to 
+		# -6000. 
+		# Calculate the standard deviation of the data set, and then find values
+		# that are more than 3 SD away from the mean (which should be ~zero in the
+		# detrended data)
+		spuriousVals = which(abs(detrendedIR) > (3*sd(detrendedIR)) )
+		if ( length(spuriousVals) > 0) {
+			# Convert to NAs 
+			temp[spuriousVals,mysensor] = NA
+			
+			for (i in 1:length(spuriousVals)){
+				indx = spuriousVals[i]  # Get the row index for this spurious value
+				if (indx == 1) {
+		 temp=temp[2:nrow(temp),]
+		  } else if(indx==2){
+		    temp=temp[2:nrow(temp),]
+		  } else if(indx>2){
+		    # Get the row index for this spurious value
+			# Replace the spurious value with the average of the values immediately
+			# before and after the spurious value
+      #temp[indx,sensor] = mean(c(temp[indx-1,sensor],temp[indx+1,sensor]))
+			temp[indx,mysensor] = mean(temp[(indx-2):(indx+2),mysensor], na.rm=TRUE)
+		  }
+			}
+		}
+		rm(spuriousVals)
+
+		
+		# With the spurious values replaced by interpolated values, re-run the 
+		# detrending routine
+		detrendedIR = pracma::detrend(temp[,sensor])
+	} else {
+		# If there were NAs, just define detrendedIR as NA so that later 
+		# operations skip over this chunk of data
+		detrendedIR = NA
+	}
+
+	
+
+	if (length(which(is.na(detrendedIR))) == 0) {
+
+		# Define a butterworth filter
+	# Consider using the bandpass filter rather than just a lowpass filter
+	# because of the tendency for the IR heartrate signal to drift up and 
+	# down in relation to ambient light, which tends to induce low-frequency
+	# shifts that then fool the spectral analysis routines when trying to 
+	# identify the dominant frequency
+		bf = signal::butter(3,W = c(lowband, highband), type = 'pass')
+		
+		# Apply the filter to the detrended data chunk
+		y = filtfilt(bf, x = detrendedIR)
+		# Calculate the spectrum of the filtered data
+		myfft2 = spectrum(y, plot = FALSE)
+		# Take the peak frequency from the spectrum, divide by sampling
+		# rate to convert to cycles per second
+		mypeakfreq = myfft2$freq[which.max(myfft2$spec)] / Fs
+		# Multiply by 60 seconds to get cycles (beats) per minute
+		BPMfft = 60 * mypeakfreq
+		# Calculate amplitude of filtered signal to denote weak or noisy signals
+		#amp = range(y)[2] - range(y)[1]
+		
+		## Plot the raw detrended signal
+#	plot(temp$DateTimeMS, detrendedIR, type = 'l', 
+#			main = paste0("Amplitude = ",round(amp,1),
+#					', BPM = ', bpm), 
+#			las = 1) 
+#	if (amp > 60){
+#		lines(temp$DateTimeMS,y, col = 3, lwd = 2) # add the filtered signal
+#	} else if (amp <= 60) {
+#		lines(temp$DateTimeMS,y, col = 2, lwd = 2) # add the filtered signal	
+#		warning('Garbage signal')
+#	}
+		# Use function from package 'forecast', returns peak period (not freq)
+		forecastPeriod = forecast::findfrequency(y)  
+		forecastFreq = 1/forecastPeriod # convert period to frequency
+		forecastBPM = forecastFreq * 60 * 8 # convert frequency to beats per 
+		# minute, based on the fact that the sampling rate is 10Hz, and there are
+		# 60 seconds in a minute
+		#	mtext(side = 3, text = paste0('Forecast BPM: ',round(forecastBPM,1)))
+		# Use pracma package to find peaks. Note that at slower heart rates
+		# this function tends to find the sub-peaks (akin to a P or T peak in a
+		# human ECG trace) rather than just the main peaks (R peaks on a human). 
+		# This happens based on what the bandpass filter lets through. 
+#	res = pracma::findpeaks(x = y, nups = 5, minpeakdistance = 10)
+#	points(temp$DateTimeMS[res[,2]], y = res[,1], col = 4, pch = 19)
+		# Print the estimated bpm from the pracma::findpeaks routine, but 
+		# you need to double the number of peaks to get bpm if your time series
+		# is only 30 seconds long
+#	mtext(side = 3, line = 3, text = paste0('pracma bpm: ', nrow(res)*2))
+		
+		# Calculate the difference between the estimated heart rates from the 
+		# spectrum fft routine and the forecast::findfrequency routine. A 
+		# small value indicates good agreement
+		BPMagreeQuality = ceiling(abs(BPMfft - forecastBPM))
+		# Set a flag for cases where the forecast:findfrequency estimate is 
+		# extremely large, which happens when it can't find a clear heart signal
+		forecastBPMflag = ifelse(forecastBPM > amplitudeThreshold, 'FAIL','OK')
+		# Set a flag for cases where the detrended/filtered signal has a very
+		# small amplitude, signaling that there may be no good heartbeat signal 
+		WeakSignalFlag = ifelse(amp < amplitudeThreshold, 'FAIL','OK')
+		
+		
+		resultsList = list(DateTimePST = temp$DateTimePST[1],
+				Sensor = sensor,
+				BPMfft = round(BPMfft,1),
+				forecastBPM = round(forecastBPM,1),
+				BPMagreeQuality = BPMagreeQuality,
+				forecastBPMflag = forecastBPMflag,
+				WeakSignalFlag = WeakSignalFlag)
+				#FilteredAmplitude = round(amp,1))
+	} else if (length( which( is.na(temp[,sensor]) ) ) > 0) {
+		# Handle the case where there are NAs in the data chunk that prevent
+		# the filtering and fft routines
+		resultsList = list(DateTimePST = temp$DateTimePST[1],
+				Sensor = sensor,
+				BPMfft = NA,
+				forecastBPM = NA,
+				BPMagreeQuality = NA,
+				forecastBPMflag = 'FAIL',
+				WeakSignalFlag = 'FAIL')
+				#FilteredAmplitude = NA)
+	}
+	
+
+	return(resultsList)
+}
 
 ```
