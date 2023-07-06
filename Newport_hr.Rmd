@@ -119,7 +119,7 @@ oystercode = unique(metafile[,'Code'])
 ##################################################################
 serialnumber=unique(metafile[,1])
 oystercode = unique(metafile[,'Code']) #make list of all oyster codes 
-oystercode=oystercode[-c(1:99)] #manually change which codes are combined 
+#oystercode=oystercode[-c(1:99)] #manually change which codes are combined 
 options(digits.secs = 3)
 
 
@@ -217,6 +217,31 @@ for (oy in (oystercode) ){
 			# some raw files were imported out of order when an oyster switched
 			# serial numbers
 			Heart = Heart[order(Heart$DateTime),]
+			
+    	# Go to the low tide servicing metadata file and get the relevant
+    	# start and end times for low tide service periods for the site/treatment
+    	# that this oyster is at (contained in the Code column)
+    	sitecode = substr(oy,1,1)
+    	treatmentcode=substr(oy,3,3)
+    	# Go to low tide service metafile and find all rows that match
+    	# this sitecode (and treatment code) and get the list of those row numbers
+    	# Then cycle through those row numbers, in each case grabbing the start time
+    	# and end time of the low tide servicing. Then go to tempoutput and find
+    	# any rows that are > start time and < end time, and convert NAs. 
+    	services = which( (maintenance$sitecode == sitecode) & (maintenance$treatmentcode == treatmentcode) )
+      	for (k in (services) ){
+      	  # Find the matching time stamps and write NAs in between them
+      	  startTime = maintenance$StartMaintUTC[k]
+      	  endTime = maintenance$EndMaintUTC[k]
+      	  # Take all rows that are between maintenance times in Heart and make 
+      	  # IR values NA. Can go back through later and remove all NAs in "IR"
+      	  Heart[which((Heart$DateTime > startTime) & (Heart$DateTime < endTime)),"IR"] = NA
+      	}
+	    startinclude=which(metafile$Code == oy) #find oy
+	    mystarts = metafile$StartIncludeUTC[startinclude] # find first DateTime for oy in the field
+	    mystarts = mystarts[order(mystarts)] #order datetimes 
+	    Heart=Heart[which(Heart$DateTime>mystarts[1]),] #pull out rows that are after first time
+	    # point of mystarts
 			# Figure out if there's a time of death associated with this oyster code. Get all of
 			# the rows that match this oyster code and pull the contents of the timeofdeath column
 			deathrows = metafile[which(substr(metafile$Code,7,10) == substr(oy,7,10)),'timeofdeath']
@@ -230,6 +255,8 @@ for (oy in (oystercode) ){
 				# There were no non-NA values in deathrows, so set timeofdeath to NA
 				timeofdeath = NA
 			}			
+			#Keep all rows without NA in IR column
+			Heart=Heart[!is.na(Heart$IR),]
 			
 			write.csv(Heart, paste0(comboheartpath, oy, "_comboheart.csv"), 
 					row.names = FALSE)
@@ -238,6 +265,16 @@ for (oy in (oystercode) ){
 	
 } # end of oystercode for loop 
 close(pb)
+
+```
+
+
+
+#remove bad data
+```{r}
+#excess 0s in W.M.1.1026
+
+
 
 ```
 
@@ -931,7 +968,7 @@ mtext(side = 2, text = 'Detrended IR signal', line = 4, cex = mycex)
 # an oyster code and then process that oyster's raw IR data
 options(digits.secs = 3) # used to preserve milliseconds values in time stamps
 
-oy = 'W.E.5.1002'
+oy = 'W.M.1.1026'
 
 Heart = read.csv(paste0(comboheartpath,oy,'_comboheart.csv'))
 Heart$DateTime = as.POSIXct(Heart$DateTime, tz = 'UTC', format="%Y-%m-%d %H:%M:%S")
@@ -948,9 +985,14 @@ bigsteps = c(1,bigsteps) # A set of row indices in Heart for each new sample per
 pb = txtProgressBar(min = 0, max = length(bigsteps), style = 3)
 
 # mylowband- filters low freq signals out, gets rid of slow signals
-mylowband = 1/200  # filtering - ran some at 1/100 as a starting point. 
-#myhighband-get rid of high freq noise so you just get normal peaks
-myhighband = 1/10  # filtering - changing this has the largest effect, start around 1/15
+mylowband = 1/100  # filtering - ran some at 1/100 as a starting point.
+# 1/100 filters out more low freq stuff.Can go as low as 1/20, try 1/50 next
+#myhighband-get rid of high freq noise so you just get normal peaks. 
+# lower (1/20-->1/15) low band if have low long dips but actually have 
+# quick peaks in there. Bc the smaller it gets, then only lets 
+# through small range of freq
+myhighband = 1/15  # filtering - changing this has the largest effect, start around 1/15
+#1/5 letting more high freq peaks through. may also catch every little peak.
 myThreshold = 4 # Minimum agreement between BPM estimates
 
 for (i in 1:length(bigsteps)){
@@ -1022,7 +1064,7 @@ onKeybd <- function(key)
 
 mysensor = 'IR'
 
-oy = 'W.E.5.1002'
+oy = 'W.M.5.1024'
 
 # Open up the concatenated heart data for this oyster
 Heart = read.csv(paste0(comboheartpath,oy,'_comboheart.csv'))
