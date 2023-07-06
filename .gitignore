@@ -2,3 +2,12 @@
 BivalveBit_Calibration_code.docx
 *.png
 .DS_Store
+<<<<<<< Updated upstream
+=======
+.gitattributes
+.RData
+.Rhistory
+BivalveBit_Calibration_code.Rmd
+July_santamonica_tides
+Newport_oldgape.Rmd
+>>>>>>> Stashed changes
