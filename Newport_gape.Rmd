@@ -1111,7 +1111,12 @@ allgape=allgape%>%
     Code!="D.O.4.1039" & #sensor not good
     Code!="W.E.5.1003" & #sensor saturated
     Code!="D.E.3.1030" & #sensor not good
-    Code!="D.M.6.1056" & #sensor not good  
+    Code!="D.M.6.1056" & #sensor not good 
+    Code!="W.M.5.1024" & #sensor narrow range
+    Code!="S.O.2.1081" & #sensor narrow range 
+    Code!="S.M.2.1090" & #sensor narrow range 
+    Code!="P.M.1.1097" & #sensor narrow range
+    Code!="S.M.1.1086" & #probably dead oyster
     Code!="W.E.2.1006" ) #sensor saturated
 
 ########## Individually cut off sensor data after death or certain dates
@@ -1207,30 +1212,176 @@ gapedat=gapedat %>%
 plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
 write.csv(gapedat, paste0(combogapefile, "P.E.1.1078", "_combogape.csv"), row.names=FALSE)
 
-#####S.M.2.1090 
-gapepath=file.path(paste0(combogapefile, "S.M.2.1090", "_combogape.csv"))
+###D.M.5.1047
+gapepath=file.path(paste0(combogapefile, "D.M.5.1047", "_combogape.csv"))
 gapedat=read.csv(gapepath)
 gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
 gapedat=gapedat %>% 
-  filter(DateTime>"2023-04-23 00:00:00")%>% 
-  filter(DateTime<"2023-04-27 00:00:00")
+  filter(DateTime<"2022-08-16 00:00:00")
 plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
-write.csv(gapedat, paste0(combogapefile, "S.M.2.1090", "_combogape.csv"), row.names=FALSE)
+write.csv(gapedat, paste0(combogapefile, "D.M.5.1047", "_combogape.csv"), row.names=FALSE)
 
+###D.O.5.1038
+gapepath=file.path(paste0(combogapefile, "D.O.5.1038", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime<"2022-10-29 20:40:00")
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "D.O.5.1038", "_combogape.csv"), row.names=FALSE)
 
-```
+###W.O.2.1011
+gapepath=file.path(paste0(combogapefile, "W.O.2.1011", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime<"2022-08-22 04:40:00")
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "W.O.2.1011", "_combogape.csv"), row.names=FALSE)
 
-#double check with luke
-```{r}
+###D.E.2.1028
+gapepath=file.path(paste0(combogapefile, "D.E.2.1028", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime<"2022-09-23 00:00:00")
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "D.E.2.1028", "_combogape.csv"), row.names=FALSE)
+
 #####D.E.3.1036
 gapepath=file.path(paste0(combogapefile, "D.E.3.1036", "_combogape.csv"))
 gapedat=read.csv(gapepath)
 gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
 gapedat=gapedat %>% 
-  filter(DateTime>"2022-12-26 12:00:00")
-
+  filter(DateTime>"2022-12-20 12:00:00")%>% 
+  filter(DateTime<"2022-12-25 23:00:00")
+  
 plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
 write.csv(gapedat, paste0(combogapefile, "D.E.3.1036", "_combogape.csv"), row.names=FALSE)
+
+#####D.E.4.1033
+gapepath=file.path(paste0(combogapefile, "D.E.4.1033", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime>"2023-05-01 00:00:00")
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "D.E.4.1033", "_combogape.csv"), row.names=FALSE)
+
+###S.M.3.1088 died in the field
+gapepath=file.path(paste0(combogapefile, "S.M.3.1088", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime<"2023-02-01 00:00:00")
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "S.M.3.1088", "_combogape.csv"), row.names=FALSE)
+
+###P.M.4.1068 #i guess i reattached the gape sensor
+gapepath=file.path(paste0(combogapefile, "P.M.4.1068", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime<"2022-09-01 00:00:00")
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "P.M.4.1068", "_combogape.csv"), row.names=FALSE)
+
+###P.M.5.1067
+gapepath=file.path(paste0(combogapefile, "P.M.5.1067", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime<"2022-08-09 00:07:00")
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "P.M.5.1067", "_combogape.csv"), row.names=FALSE)
+
+###D.O.2.1037 probably died
+gapepath=file.path(paste0(combogapefile, "D.O.2.1037", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter((DateTime>"2022-10-01 00:00:00"& DateTime<"2023-01-07 00:00:00")|(DateTime>"2023-02-15 00:00:00" & DateTime<"2023-02-27 00:00:00"))
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "D.O.2.1037", "_combogape.csv"), row.names=FALSE)
+
+###W.M.2.1019
+gapepath=file.path(paste0(combogapefile, "W.M.2.1019", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter((DateTime>"2022-07-01 00:00:00"& DateTime<"2022-09-07 00:00:00")|(DateTime>"2023-05-15 00:00:00" & DateTime<"2023-07-27 00:00:00"))
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "W.M.2.1019", "_combogape.csv"), row.names=FALSE)
+
+###P.M.2.1072
+gapepath=file.path(paste0(combogapefile, "P.M.2.1072", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime<"2023-02-11 00:00:00")
+plot(gapedat$DateTime, gapedat$Hall, type="l") #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "P.M.2.1072", "_combogape.csv"), row.names=FALSE)
+
+###W.E.3.1007
+gapepath=file.path(paste0(combogapefile, "W.E.3.1007", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter((DateTime>"2022-07-01 00:00:00"& DateTime<"2022-10-20 00:00:00")|
+        (DateTime>"2022-10-25 00:00:00" & DateTime<"2023-05-24 00:00:00")|
+        (DateTime>"2023-06-01 00:00:00" & DateTime<"2023-07-27 00:00:00"))
+plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "W.E.3.1007", "_combogape.csv"), row.names=FALSE)
+
+
+```
+
+TODO
+```{r}
+###D.M.2.1053 take off points at end
+gapepath=file.path(paste0(combogapefile, "D.M.2.1053", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime<"2023-02-11 00:00:00")
+plot(gapedat$DateTime, gapedat$Hall, type="l") #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "D.M.2.1053", "_combogape.csv"), row.names=FALSE)
+
+###W.O.2.1012 cut out middle
+gapepath=file.path(paste0(combogapefile, "W.O.2.1012", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime<"2023-02-11 00:00:00")
+plot(gapedat$DateTime, gapedat$Hall, type="l") #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "W.O.2.1012", "_combogape.csv"), row.names=FALSE)
+
+###W.M.4.1023 cut out middle
+gapepath=file.path(paste0(combogapefile, "W.M.4.1023", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime<"2023-02-11 00:00:00")
+plot(gapedat$DateTime, gapedat$Hall, type="l") #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "W.M.4.1023", "_combogape.csv"), row.names=FALSE)
+
+###P.M.2.1070 cut out beginning
+gapepath=file.path(paste0(combogapefile, "P.M.2.1070", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime<"2023-02-11 00:00:00")
+plot(gapedat$DateTime, gapedat$Hall, type="l") #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "P.M.2.1070", "_combogape.csv"), row.names=FALSE)
+
+###W.M.1.1026 cut out beginning
+gapepath=file.path(paste0(combogapefile, "W.M.1.1026", "_combogape.csv"))
+gapedat=read.csv(gapepath)
+gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+gapedat=gapedat %>% 
+  filter(DateTime<"2023-02-11 00:00:00")
+plot(gapedat$DateTime, gapedat$Hall, type="l") #check to make sure worked
+write.csv(gapedat, paste0(combogapefile, "W.M.1.1026", "_combogape.csv"), row.names=FALSE)
 ```
 
 #gape test plots
