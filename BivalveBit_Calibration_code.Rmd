@@ -18,13 +18,68 @@ localpath = '../../data/'  # Luke's path
 ```
 
 ```{r directories}
-BivalveBitCalibDir = paste0(localpath,'Calibration/Newport_BivalveBit_calibrations/')
-
-
+BivalveBitCalibDir = paste0(localpath,'Newport_SSINP/calibration/')
+CalibrationFile = "2023_calibrations_ostrea - Sheet1.csv"
+#CalibrationFile = "2023_calibrations_ostrea - simulateddata.csv"
 ```
 
 
 # Calibration walk-through
+
+
+## Summer 2023
+
+Calibrations were performed on empty shells from Ostrea lurida formerly deployed
+in Newport Bay. The shell valves were either still attached, or re-attached
+with hot glue to keep the hinge movement intact. Gape opening was measured
+using round rods of known diameter, and the associated Hall effect sensor 
+raw reading (Counts) was recorded. Data are found in the file
+`2023_calibrations_ostrea - Sheet1.csv`. 
+
+
+```{r importSummer2023calibs, echo=showcode}
+
+calibs = read.csv(paste0(BivalveBitCalibDir,CalibrationFile))
+# Date = date of calibration
+# Code = oyster code, unique for a given oyster, n/g marks oysters with unknown IDs
+# Distance_mm = diameter of the gauge rod
+# Reading1, Reading2, Reading3 = replicate measurements
+
+calibs$Code = factor(calibs$Code)
+
+```
+
+
+```{r rearrangeDatatoLong}
+# Reshape the data so that values from the 3 replicates are all in a 
+# single column
+library(tidyr)
+library(nlme)
+calibs = gather(calibs, key = RepNumber, value = HallVal, Reading1:Reading3 )
+
+# Create a groupedData version of the data, for quick plotting
+c2 = groupedData(HallVal~Distance_mm|Code, data = calibs)
+
+```
+
+
+```{r plotCurves, echo=showcode}
+
+plot(c2)
+```
+
+
+```{r trimQuestionableOysterCalibs, echo=showcode}
+# D.M.2.1051 is not usable because it's saturated when closed. Remove it
+c2 = c2[-(which(c2$Code == 'D.M.2.1051')),]
+calibs = calibs[-(which(calibs$Code == 'D.M.2.1051')),]
+# D.M.6.1056 only has one entry, remove it.
+#c2 = c2[-(which(c2$Code == 'D.M.6. 1056')),]
+#calibs = calibs[-(which(calibs$Code == 'D.M.6. 1056')),]
+
+plot(c2)
+```
+
 
 ## Fall 2022
 We calibrated individual Hall effect gape sensors attached to BivalveBit
@@ -567,6 +622,44 @@ cRegressEstimate <- function(gapeCalibFile){
 	cRegress
 }  # end of cRegressEstimate function.
 ################################################################################
+
+
+```
+
+
+
+```{r testFits, eval=FALSE, echo=FALSE}
+# messing around here. 
+# For small gape distances, 0-2mm as Lauren calibrated the Ostrea, you see
+# a relatively linear relationship, without an obvious asymptote that would 
+# appear as the gape opened wider and wider (toward 5mm or 10mm+). As a result,
+# it might be reasonable to just use a linear fit (slope + intercept), and
+# then establish the relationship between slope as intercept changes
+
+mod5 = lmList(HallVal~Distance_mm, data = c2)  # c2 is a groupedDate object
+
+
+abvals = data.frame(int = coef(mod5)[,1], slope = coef(mod5)[,2])
+# Show the really tight linear relationship between the intercept and slope.
+# Since all sensors are trending towards the same ending value (~512), if you
+# start at a lower baseline (intercept) value, you necessarily end up with 
+# a steeper slope during the early opening phases in order to get up to ~512
+# by the time you've hit a wide opening. 
+plot(slope~int, data = abvals)
+abline(lm(slope~int, data = abvals))
+
+# Based on the regression between intercept and slope, it perhaps ought to be
+# reasonable to specify a starting baseline value (Hall value when shell is
+# fully closed), and then from that establish what the slope ought to be for 
+# the first ~2mm of opening (based on our calibrations), and thus generate
+# a predictive equation for the relationship between Hall values and gape 
+# opening.
+# If we were worried about the Ostrea going through a much wider range of 
+# openings then we might have to revert to the non-linear regression model
+# used for the larger species, but if Ostrea aren't ever opening that wide
+# to begin with, they'll be in a fairly linear portion of the Hall effect
+# sensor curve, regardless of where they start out with their baseline closed value. 
+
 
 ```
 
