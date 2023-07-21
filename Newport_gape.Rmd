@@ -12,14 +12,9 @@ editor_options:
 
 ## Get raw hall value (not ninetieth distance mm value) because when calculate distances looks at asymptotic value from raw hall. Truncate raw hall values on percentilelim function. from previous chunk and use as
 
-#Get max of percentilRange and use as raw hall value. Then plug in as
-argument in \# Do this with aVal and bVal
+#Get max of percentilRange and use as raw hall value. Then plug in as argument in \# Do this with aVal and bVal
 
-##Callibration stuff???
-
-Figure out why the combogape file has a bunch of extraneous columns
-added onto the front of the file. They may be rownumbers getting saved
-as new columns
+#Figure out why the combogape file has a bunch of extraneous columns added onto the front of the file. They may be rownumbers getting saved as new columns
 
 ### calculate individual % open/closed. Then take average of all oysters in each treatment/site/by month but average has to be weighted bc some oysters only collect for 1 day vs others for 3 months. Then somehow do variance with weighted averages.
 
@@ -36,6 +31,7 @@ library(dplyr)
 library(Tides)
 library(janitor)
 library(zoo)
+library(esquisse)
 ```
 
 #import files
@@ -1084,40 +1080,8 @@ for(oy in (oystercode)){
 
 #Remove outliers for specific oysters.
 ```{r}
-#Remove bad gape oysters
-allgape=allgape%>%
-  dplyr::filter(
-    Code!="D.M.4.1048" & #sensor not good
-    Code!="W.M.5.1025" & #sensor not good
-    Code!="P.O.2.1061" & #sensor not good
-    Code!="S.O.1.1080" & #sensor not good
-    Code!="D.O.3.1043" & #sensor saturated
-    Code!="P.O.5.1063" & #sensor saturated
-    Code!="D.E.1.1034" & #sensor saturated
-    Code!="S.O.5.1084" & #sensor saturated
-    Code!="S.O.3.1094" & #sensor not good
-    Code!="S.O.1.1085" & #sensor not good
-    Code!="W.O.3.1099" & #sensor not good
-    Code!="P.O.1.1064" & #sensor not good
-    Code!="S.O.2.1093" & #sensor not good
-    Code!="D.O.1.1042" & #sensor not good
-    Code!="P.O.2.1066" & #sensor not good
-    Code!="D.E.1.1035" & #sensor not good
-    Code!="W.O.3.1014" & #sensor not good
-    Code!="D.M.1.1051" & #sensor not good
-    Code!="W.O.1.1017" & #sensor saturated
-    Code!="P.O.1.1057" & #sensor not good
-    Code!="D.O.4.1040" & #sensor not good
-    Code!="D.O.4.1039" & #sensor not good
-    Code!="W.E.5.1003" & #sensor saturated
-    Code!="D.E.3.1030" & #sensor not good
-    Code!="D.M.6.1056" & #sensor not good 
-    Code!="W.M.5.1024" & #sensor narrow range
-    Code!="S.O.2.1081" & #sensor narrow range 
-    Code!="S.M.2.1090" & #sensor narrow range 
-    Code!="P.M.1.1097" & #sensor narrow range
-    Code!="S.M.1.1086" & #probably dead oyster
-    Code!="W.E.2.1006" ) #sensor saturated
+# Manually removed from combogape files on comp that were all bad
+# If not manually removed, code for removing from allgape is below
 
 ########## Individually cut off sensor data after death or certain dates
 #P.M.3.1069 keep everything after 2022-10-23 21:21:00
@@ -1295,7 +1259,7 @@ gapedat=gapedat %>%
 plot(gapedat$DateTime, gapedat$Hall) #check to make sure worked
 write.csv(gapedat, paste0(combogapefile, "P.M.5.1067", "_combogape.csv"), row.names=FALSE)
 
-###D.O.2.1037 probably died
+###D.O.2.1037
 gapepath=file.path(paste0(combogapefile, "D.O.2.1037", "_combogape.csv"))
 gapedat=read.csv(gapepath)
 gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
@@ -1318,7 +1282,7 @@ gapepath=file.path(paste0(combogapefile, "P.M.2.1072", "_combogape.csv"))
 gapedat=read.csv(gapepath)
 gapedat$DateTime=as.POSIXct(gapedat$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
 gapedat=gapedat %>% 
-  filter(DateTime<"2023-02-11 00:00:00")
+  filter(DateTime<"2023-02-11 06:00:00")
 plot(gapedat$DateTime, gapedat$Hall, type="l") #check to make sure worked
 write.csv(gapedat, paste0(combogapefile, "P.M.2.1072", "_combogape.csv"), row.names=FALSE)
 
@@ -1469,6 +1433,44 @@ allgapemeta$Code<-as.factor(allgapemeta$Code)
 remove(allgape)
 ```
 
+#remove bad oysters from all gape if not manually removed from files
+```{r}
+#Remove bad gape oysters
+allgapemeta=allgapemeta%>%
+  dplyr::filter(
+    Code!="D.M.4.1048" & #sensor not good
+    Code!="W.M.5.1025" & #sensor not good
+    Code!="P.O.2.1061" & #sensor not good
+    Code!="S.O.1.1080" & #sensor not good
+    Code!="D.O.3.1043" & #sensor saturated
+    Code!="P.O.5.1063" & #sensor saturated
+    Code!="D.E.1.1034" & #sensor saturated
+    Code!="S.O.5.1084" & #sensor saturated
+    Code!="S.O.3.1094" & #sensor not good
+    Code!="S.O.1.1085" & #sensor not good
+    Code!="W.O.3.1099" & #sensor not good
+    Code!="P.O.1.1064" & #sensor not good
+    Code!="S.O.2.1093" & #sensor not good
+    Code!="D.O.1.1042" & #sensor not good
+    Code!="P.O.2.1066" & #sensor not good
+    Code!="D.E.1.1035" & #sensor not good
+    Code!="W.O.3.1014" & #sensor not good
+    Code!="D.M.1.1051" & #sensor not good
+    Code!="W.O.1.1017" & #sensor saturated
+    Code!="P.O.1.1057" & #sensor not good
+    Code!="D.O.4.1040" & #sensor not good
+    Code!="D.O.4.1039" & #sensor not good
+    Code!="W.E.5.1003" & #sensor saturated
+    Code!="D.E.3.1030" & #sensor not good
+    Code!="D.M.6.1056" & #sensor not good 
+    Code!="W.M.5.1024" & #sensor narrow range
+    Code!="S.O.2.1081" & #sensor narrow range 
+    Code!="S.M.2.1090" & #sensor narrow range 
+    Code!="P.M.1.1097" & #sensor narrow range
+    Code!="S.M.1.1086" & #probably dead oyster
+    Code!="W.E.2.1006" ) #sensor saturated
+```
+
 #calculate proportion open/closed for each code, then average them per treatment/site
 ```{r}
 #average by site and treatment to get average %open/closed for each oyster in each site/treatment
@@ -1519,10 +1521,13 @@ ggplot(gapebinarypercent, aes(Site, n, fill=binary))+
   labs(y="Valve gape")
 ```
 
-#calculate proportion open/closed just for nov-march
+#calculate proportion open/closed just for 2022
 ```{r}
 gapebinarypercentnov <- allgapemeta %>%
-    filter(DateTime > '2022-11-01') %>% 
+    # filter((DateTime > '2022-05-01 00:00:00') &
+    #         (DateTime<"2022-12-31 00:00:00")) %>%
+    filter((DateTime > '2022-12-31 00:00:00') &
+        (DateTime<"2023-07-01 00:00:00")) %>%
   group_by(Code) %>% #do calculations by oyster code
   drop_na(binary) %>% 
   group_by(Treatment,Site) %>% 
@@ -1539,7 +1544,7 @@ ggplot(gapebinarypercentnov, aes(Treatment, percentopen))+
   labs(y="Proportion of open valves")+
   theme(axis.text = element_text(size = 20), axis.title = element_text(size = 30))
 
-ggsave(path=plots, "proportion_open_treatment_nov-mar.png", width=6, height=6)
+ggsave(path=plots, "proportion_open_treatment_2023.png", width=6, height=6)
 ```
 
 #calculate 1 percent closed value for each code, graph and glm
@@ -1873,6 +1878,40 @@ valvetreatment.glm <-  glm(formula = percentclosed ~ Treatment,
 
 ```
 
+#plot field deaths by site or treatment
+```{r}
+yesdead<-metafile %>%
+  group_by(Site, Treatment, Fielddeath) %>% 
+  summarise(n=n()) %>% 
+  group_by(Fielddeath) %>% 
+  mutate(prop=n/sum(n)) %>% 
+  filter(Fielddeath %in% "Yes") 
+
+yesdeadtreatment<-yesdead %>% 
+  group_by(Treatment) %>% 
+  summarise(n=sum(n))
+
+yesdeadsite<-yesdead %>% 
+  group_by(Site) %>% 
+  summarise(n=sum(n))
+
+esquisse::esquisser()
+
+ggplot(yesdeadtreatment, aes(Treatment, n))+
+  geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  labs(y="Number of field deaths")
+ggsave(path=plots, "Field_deaths_treatment.png", width=6, height=6)
+
+ggplot(yesdeadsite, aes(Site, n))+
+  geom_bar(position="dodge", stat="summary", fun="mean")+
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  labs(y="Number of field deaths")
+ggsave(path=plots, "Field_deaths_site.png", width=6, height=6)
+
+```
+
+
 ```{r lukeScratch2, eval = FALSE}
 require(nlme)
 gapecalibfile = paste0(localpath,'Newport_SSINP/calibration/202303_calibrations_ostrea - Sheet1.csv')
@@ -2025,7 +2064,6 @@ fielddeath$DateTime[128710]
 ```
 
 #growth data
-
 ```{r}
 growth$Date=as.Date(growth$Date)
 growth %>% 
