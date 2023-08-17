@@ -8,16 +8,6 @@ editor_options:
     wrap: 72
 ---
 
-### To do:
-
-## Get raw hall value (not ninetieth distance mm value) because when calculate distances looks at asymptotic value from raw hall. Truncate raw hall values on percentilelim function. from previous chunk and use as
-
-#Get max of percentilRange and use as raw hall value. Then plug in as argument in \# Do this with aVal and bVal
-
-#Figure out why the combogape file has a bunch of extraneous columns added onto the front of the file. They may be rownumbers getting saved as new columns
-
-### calculate individual % open/closed. Then take average of all oysters in each treatment/site/by month but average has to be weighted bc some oysters only collect for 1 day vs others for 3 months. Then somehow do variance with weighted averages.
-
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 ```
@@ -32,6 +22,8 @@ library(Tides)
 library(janitor)
 library(zoo)
 library(esquisse)
+library(timetk)
+library(ggpattern)
 ```
 
 #import files
@@ -54,12 +46,34 @@ combogapefile= paste0(localpath,'Newport_SSINP/combinedgape/')
 metafilePath = paste0(localpath,'Newport_SSINP/metadata/')
 
 #tides
-julyaugusttides=read.csv("../data/Newport_SSINP/tides/LAtides202207-202208.csv")
+tides=read.csv("../data/Newport_SSINP/environmental_data/LosAngeles_tides_202205-202307.csv")
+tides$DateTime=as.POSIXct(tides$TimeUTC, tz="UTC", format="%Y-%m-%d %H:%M")
+
+#precipitation
+precip=read.csv("../data/Newport_SSINP/environmental_data/Weather_data_KSNA_202205-202307.csv")
+precip$DateTimeUTC=as.POSIXct(precip$DateTimeUTC, tz="UTC", format="%Y-%m-%d %H:%M")
 
 #plots
 plots=paste0(localpath,'Newport_SSINP/plots/')
 
 ```
+
+#graphing settings
+```{r}
+sitePalette <- c("#E69F00", "#56B4E9", "#009E73", "#0072B2")
+sitePalette2 <- c("#E69F00", "#E69F00","#56B4E9","#56B4E9", "#009E73", "#009E73","#0072B2","#0072B2")
+
+# Function to scale secondary axis
+scale_function <- function(x, scale, shift){
+  return ((x)*scale - shift)
+}
+
+# Function to scale secondary variable values
+inv_scale_function <- function(x, scale, shift){
+  return ((x + shift)/scale)
+}
+```
+
 
 #Functions: gapBounds, gapBounds2, hallFilter, DistFromCounts,percentileRange, calcPercentGapeNLME, calcPercentGapeNLMEsubset,CRegressEstimate
 ```{r gapBoundsFunctions, echo=showcode}
@@ -216,9 +230,10 @@ gapBounds2=function(mygaps, maxrow){
   mygaps2 # return this data frame at the end of the function
   
 }
-```
 
-```{r hallFilter_function}
+
+
+#{r hallFilter_function}
 ################################################################################
 ### hallFilter function
 #' A function to apply a Butterworth 1st order low-pass filter to a vector
@@ -261,9 +276,10 @@ hallFilter = function(hallData){
 	hallData = round(hallData)
 	hallData	# return vector of filtered data
 }
-```
 
-```{r DistFromCounts_function}
+
+
+####{r DistFromCounts_function}
 ################################################################################
 ### DistFromCounts function
 # Define a non-linear function that allows you to plug in a Hall effect sensor
@@ -294,9 +310,9 @@ DistFromCounts <- function(Counts, a,b,c){
 	dist = (log((Counts - a)/(-1*b))) / (-1*c)
 	dist
 }
-```
 
-```{r percentileRange_function}
+
+###{r percentileRange_function}
 ################################################################################
 ### percentileRange function
 # Define a function to calculate the average reading for the upper and lower
@@ -338,9 +354,9 @@ percentileRange <- function (Hallvec, percentileLim = c(0.01,0.99)){
 	result = c(closedVal, openVal)
 	result # return the two values, always smallest then largest
 }
-```
 
-```{r calcPercentGapeNLME_function}
+
+####{r calcPercentGapeNLME_function}
 ################################################################################
 ### calcPercentGapeNLME function
 # Use this function to calculate the percentage gape (0-100%)
@@ -402,9 +418,10 @@ calcPercentGapeNLME <- function (hallData, cRegress, percentileLim = 0.01){
 	outputData	# return the output data vector
 }	# end of calcPercentGapeNLME function
 
-```
 
-```{r calcPercentGapeNLMEsubset_function}
+
+
+####{r calcPercentGapeNLMEsubset_function}
 ################################################################################
 ### calcPercentGapeNLMEsubset function
 # Use this function to calculate the percentage gape (0-100%) of only a subset of data (days) at a time to account for growth of oyster shell. 
@@ -535,9 +552,10 @@ calcPercentGapeNLMEsubset <- function (hallData, cRegress, percentileLim = c(0.0
 	
 	outputData	# return the output data vector
 }	# end of calcPercentGapeNLME function
-```
 
-```{r cRegress_function}
+
+
+###{r cRegress_function}
 #cRegressEstimate helps calibrate sensors using CalibFileName.csv file 
 ################################################################################
 ################################################################################
@@ -962,9 +980,839 @@ oystercode = unique(metafile[,'Code'])
 
 #import growth measurements
 growth=read.csv(paste0(metafilePath, "growth_measurements - Sheet1.csv"))
+
+#import allgapemeta
+allgapemeta=read.csv(paste0(NewportDir,"combinedgapemeta/", "allgapemeta.csv"))
+#change datetime to posixct
+allgapemeta$DateTime=as.POSIXct(allgapemeta$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
 ```
 
-#list individal gape files and combine into one csv per SN, cut out specific times from meta data that shouldn't be used
+#calculate proportion open/closed for each code, then average them per treatment/site
+```{r}
+#average by site and treatment to get average %open/closed for each oyster in each site/treatment
+gapebinarypercent <- allgapemeta %>%
+  group_by(Code) %>% #do calculations by oyster code
+  drop_na(binary) %>% 
+  group_by(Treatment,Site) %>% 
+  count(binary) %>% 
+  mutate(percentopen=n/sum(n)) 
+
+gapebinaryopen=gapebinarypercent[gapebinarypercent$binary == '1', ]
+
+#calculate average open/closed per code
+gapebinarypercentcode <- allgapemeta %>%
+  group_by(Code) %>% #do calculations by oyster code
+  drop_na(binary) %>% 
+  count(binary) %>% 
+  mutate(percentopen=n/sum(n))
+
+#weighted proportion within site, calculate total open and total observations for treatments within sites, same numbers as gapebinarypercent
+weightedgapebinary<-gapebinarypercent %>%
+  group_by(Treatment,Site) %>% 
+  mutate(total_obs=sum(n)) %>% 
+  filter(binary=="1") %>% 
+  rename(totalopen=n) %>% 
+  select(-c(percentopen,binary)) %>% 
+  mutate(prop_open=totalopen/total_obs)
+
+ggplot(weightedgapebinary, aes(Treatment, prop_open, fill = Treatment)) + # ggplot2 barplot with error bars
+  geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
+  stat_summary(geom = "errorbar", fun.data = mean_se, position = "dodge",width = 0.2, size = 0.75)+
+  ylim(0,1)+
+  theme_classic()+
+  labs(y="Proportion of open valves")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 30))
+
+ggsave(path=plots, "proportion_open_treatment_weighted.png", width=7, height=6)
+
+ggplot(weightedgapebinary, aes(Site, prop_open))+
+  #geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
+  geom_bar(position="dodge", stat="summary", fun="mean", fill=cbPalette)+
+  #check that it's standard error
+  #geom_errorbar( aes(x=name, ymin=value-sd, ymax=value+sd), width=0.4, colour="orange", alpha=0.9, size=1.3)
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  ylim(0,1)+
+  theme_classic()+
+  labs(y="Proportion of open valves")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 30))
+
+ggsave(path=plots, "proportion_open_site.png", width=7, height=6)
+
+```
+
+#seasons/precip
+```{r}
+#get culm rainfall per day
+
+precip[is.na(precip)] <- 0
+
+#only pull out 00:53:00 numbers from precip
+precip53 <- subset(precip, format(precip$DateTimeUTC, "%M") %in% c('53'))
+
+#average of precip per day
+precipday=precip53 %>%
+    group_by(day = floor_date(DateTimeUTC, unit = "day")) %>%
+  summarise(day_mean = mean(Precip1hr.mm, na.rm=T),
+            sd = sd(Precip1hr.mm, na.rm=T),
+            n = n())
+
+#get sum of precip per day
+precipsumday=precip53 %>%
+  summarise_by_time(
+    .date_var=DateTimeUTC,
+    .by= "day", 
+    precipday = sum(Precip1hr.mm, na.rm=T))
+
+
+#get culm rainfall per month
+precipculm=precip53 %>% 
+  summarise_by_time(
+    .date_var=DateTimeUTC,
+    .by= "month", 
+    precipday = sum(Precip1hr.mm, na.rm=T)) %>%
+  filter(DateTimeUTC>"2022-06-01" & DateTimeUTC<"2023-06-01")
+
+#average rainfall per month
+precipaverage=precipsumday %>% 
+  group_by(month = floor_date(DateTimeUTC, unit = "month")) %>%
+  summarise(month_mean = mean(precipday, na.rm=T),
+            sd = sd(precipday, na.rm=T),
+            n = n()) %>%
+  mutate(se = sd / sqrt(n))%>% 
+  filter(month>"2022-06-01" & month<"2023-06-01")
+
+#precipdat=precipdat[precipdat$precipday != 0, ]
+
+#average
+ggplot(precipaverage, aes(month, month_mean))+ 
+  geom_bar(stat = "identity")+
+  theme_classic()+
+  labs(y="Average precipitation (mm)", x="Date")+
+  scale_x_datetime(labels = date_format("%b"),date_breaks = "1 month")+
+  geom_errorbar(aes(ymin = month_mean - se, ymax = month_mean + se), width = 1, stat = "identity",position=position_dodge(.9)) +
+  theme(axis.text = element_text(size = 15), axis.title = element_text(size = 20))
+
+ggsave(path=plots, "average_precip_orangecounty.png", width=6, height=6)
+
+#cumulative
+ggplot(precipmonth, aes(DateTimeUTC, precipday))+ 
+  geom_bar(stat = "identity")+
+  theme_classic()+
+  labs(y="Cumulative precipitation (mm)", x="Date")+
+  scale_x_datetime(labels = date_format("%b"),date_breaks = "1 month")+
+  #geom_errorbar(aes(ymin = month_mean - se, ymax = month_mean + se), width = 1, stat = "identity",position=position_dodge(.9)) +
+  theme(axis.text = element_text(size = 15), axis.title = element_text(size = 20))
+
+ggsave(path=plots, "cumulative_precip_orangecounty.png", width=6, height=6)
+
+#Wet season=Jan 2023-April 2023
+
+gapewet <- allgapemeta %>%
+    # filter((DateTime > '2022-05-01 00:00:00') &
+    #         (DateTime<"2022-12-31 00:00:00")) %>%
+    filter((DateTime > '2022-12-31 00:00:00') &
+        (DateTime<"2023-04-01 00:00:00")) %>%
+  group_by(Code) %>% #do calculations by oyster code
+  drop_na(binary) %>% 
+  group_by(Treatment,Site) %>% 
+  count(binary) %>% 
+  mutate(percentopen=n/sum(n))%>% 
+  filter(binary=="1") 
+
+gapedry <- allgapemeta %>%
+  filter((DateTime>"2022-05-01 00:00:00"& DateTime<"2022-12-31 00:00:00")|(DateTime>"2023-04-01 00:00:00")) %>% 
+  group_by(Code) %>% #do calculations by oyster code
+  drop_na(binary) %>% 
+  group_by(Treatment,Site) %>% 
+  count(binary) %>% 
+  mutate(percentopen=n/sum(n))%>% 
+  filter(binary=="1") 
+
+seasondata<- bind_rows(gapewet, gapedry, .id = 'Season')
+seasondata=season %>% 
+  mutate(set = recode(set, '1' = 'Wet', '2' = 'Dry')) %>% 
+  select(-c(binary))
+
+colour_palette = c("#C9C9C9", "#999999", "#70DCBE", "#009E73", "#DC9867", "chocolate4")
+
+ggplot(seasondata, aes(Treatment, percentopen, fill=interaction(season, Treatment)))+
+  geom_bar(position="dodge", stat="summary", fun="mean", col="black")+
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75, position = position_dodge(width = .9))+
+  scale_fill_manual(values = colour_palette)+
+  ylim(0,1)+
+  theme_classic()+
+  labs(y="Proportion of open valves")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 30))
+
+ggsave(path=plots, "gape_season.png", width=6, height=6)
+
+#####TREATMENT###############
+avgseasontreatment=seasondata %>% 
+  group_by(Treatment,season) %>% 
+   mutate(avgpercentopen=mean(percentopen),se=sd(percentopen)/sqrt(3))
+
+ggplot(avgseasontreatment, aes(Treatment, avgpercentopen,fill=interaction(season,Treatment))) +
+  geom_col_pattern(
+    aes(pattern = season),
+    colour = "black",
+    pattern_fill = "black",
+    pattern_angle = 45,
+    pattern_density = 0.05,
+    pattern_spacing = 0.02,
+    pattern_key_scale_factor = 0.6,
+    position = position_dodge(width = .9)) +
+  geom_errorbar(aes(ymin=avgpercentopen-se, ymax=avgpercentopen+se),position=position_dodge(width = .9), width=0.2,size = 0.75)+
+  scale_pattern_manual(values = c(Dry="stripe", Wet="none")) +
+  scale_fill_manual(values=c("#999999", "#999999","#009E73","#009E73", "chocolate4","chocolate4"))+
+  guides(pattern = guide_legend(override.aes = list(fill = "white"),title="Season",size=20),
+         fill = guide_legend(override.aes = list(pattern = "none")))+
+  ylim(0,1)+
+  theme_classic()+
+  labs(y="Proportion of open valves")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 25),legend.title = element_text(size=25), legend.text = element_text(size=15))+
+  guides(fill = "none")
+
+ggsave(path=plots, "gape_seasontreatment.png", width=6, height=6)
+
+#####SITE###############
+avgseasonsite=seasondata %>% 
+  group_by(Site,season) %>% 
+   mutate(avgpercentopen=mean(percentopen),se=sd(percentopen)/sqrt(4))
+
+ggplot(avgseasonsite, aes(Site, avgpercentopen,fill=interaction(season,Site))) +
+  geom_col_pattern(
+    aes(pattern = season),
+    colour = "black",
+    pattern_fill = "black",
+    pattern_angle = 45,
+    pattern_density = 0.05,
+    pattern_spacing = 0.02,
+    pattern_key_scale_factor = 0.6,
+    position = position_dodge(width = .9)) +
+  geom_errorbar(aes(ymin=avgpercentopen-se, ymax=avgpercentopen+se),position=position_dodge(width = .9), width=0.2,size = 0.75)+
+  scale_pattern_manual(values = c(Dry="stripe", Wet="none")) +
+  scale_fill_manual(values=sitePalette2)+
+  guides(pattern = guide_legend(override.aes = list(fill = "white"),title="Season",size=20),
+         fill = guide_legend(override.aes = list(pattern = "none")))+
+  ylim(0,1)+
+  theme_classic()+
+  labs(y="Proportion of open valves")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 25),legend.title = element_text(size=25), legend.text = element_text(size=15))+
+  guides(fill = "none")
+
+ggsave(path=plots, "gape_seasonSite.png", width=6, height=6)
+
+
+##########Oyster v precip ############
+oy="W.O.2.1018"
+hallprecip=loadComboGape(oy)
+hallprecip$DateTimeUTC=hallprecip$DateTime
+hallprecip<- left_join(hallprecip, precip53, by=c("DateTimeUTC"))
+
+max_first  <- max(hallprecip$hallpercent,na.rm=T)   # Specify max of first y axis
+max_second <- max(hallprecip$Precip1hr.mm,na.rm=T) # Specify max of second y axis
+min_first  <- min(hallprecip$hallpercent, na.rm=T)   # Specify min of first y axis
+min_second <- min(hallprecip$Precip1hr.mm,na.rm=T) # Specify min of second y axis
+
+# scale and shift variables calculated based on desired mins and maxes
+scale = (max_second - min_second)/(max_first - min_first)
+shift = min_first - min_second
+
+ggplot(hallprecip, aes(x = DateTimeUTC, y = hallpercent)) +
+  geom_line(aes(color="Gape opening %")) +
+  geom_smooth(color="red")+
+  geom_point(aes(y = inv_scale_function(Precip1hr.mm,scale,shift), color = "Cumulative precipitation (mm/day)")) +
+  scale_y_continuous(limits = c(min_first, max_first), sec.axis = sec_axis(~scale_function(., scale, shift), name="Cumulative precipitation (mm/day)")) +
+  labs(x = "Date", y = "Gape opening %", color = "", title=oy) +
+  scale_color_manual(values = c("blue", "black"))+
+  theme_classic()+
+  scale_x_datetime(limits = as.POSIXct(strptime(c("2022-12-25 00:00:00", "2023-01-20 00:00:00"),format = "%Y-%m-%d %H:%M")))
+
+ggsave(path=plots, paste0(oy,"_precip.png"), width=6, height=6)
+
+coeff=10
+
+ggplot(hallprecip, aes(x = DateTimeUTC)) +
+  #graph gape opening lines
+  #smooth gape line
+  #geom_smooth(aes(y=hallpercent),color="red")+
+  #smooth precip line
+  geom_bar(aes(y=Precip1hr.mm), stat="identity", size=3, color="blue", alpha=.4) +
+  geom_line(aes(y=hallpercent/coeff, color="Gape opening %"),color="black") +
+  #precip points
+  #geom_point(aes(y=Precip1hr.mm/coeff),color="blue") +
+  scale_y_continuous(
+    name="Cumulative precipitation (mm/day)", 
+    sec.axis = sec_axis(~.*coeff, name="Gape opening %")) +
+  labs(x = "Date", y = "Gape opening %", color = "", title=oy) +
+  #scale_color_manual(values = c("blue", "black"))+
+  theme_classic()+
+  scale_x_datetime(limits = as.POSIXct(strptime(c("2022-12-25 00:00:00", "2023-01-20 00:00:00"),format = "%Y-%m-%d %H:%M")))
+
+ggsave(path=plots, paste0(oy,"_precip_diff.png"), width=6, height=6)
+```
+
+#calculate 1 percent closed value for each code, graph and glm
+```{r}
+#calculate percent closed column 
+allgapemetapercentopen=as.data.frame(allgapemeta %>% 
+  group_by(Code, binary) %>% 
+  summarise(n = n(), 
+            Treatment=unique(Treatment), #keep treatment 
+            Site=unique(Site), 
+            Died=unique(Died)) %>%     #keep site
+  mutate(percentopen = n/sum(n)) %>% 
+  dplyr::filter(binary=="1") %>% 
+  ungroup () 
+  )
+
+#graph? eelgrass closed most, then oyster, then mud
+ggplot(allgapemetapercentopen, aes(Treatment, percentopen))+
+  geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
+  stat_summary(fun.data = mean_cl_boot, geom = "errorbar", width = 0.2, size = 0.75)+
+  ylim(0,1)+
+  theme_classic()+
+  labs(y="Proportion of open valves")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 30))
+
+ggsave("proportion_open_treatment.png", width=6, height=6)
+
+percentopenmodel=glm(log(percentopen)~Treatment, data=allgapemetapercentopen, family="binomial")
+
+summary(percentopenmodel)
+#not significantly different
+
+#look at percent open data. Still not sig
+percentopenmodel=glm(percentopen~Treatment, data=allgapemetapercentclosed, family="binomial")
+
+summary(percentopenmodel)
+#same
+
+```
+
+#tides
+```{r}
+ggplot(tides, aes(DateTime, TideHT.m))+
+  geom_line()+
+  #xlim(as.Date(c("2022-07-18", "2022-08-10")), format="%Y/%m/%d")
+  #scale_x_datetime(limits = as.POSIXct(strptime(c("2022-07-18 00:00", "2022-08-10 23:59"),format = "%Y-%m-%d %H:%M")))+
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black"))+
+  labs(x="Date", y="Tide height (ft)")
+
+ggsave("julyaugusttides.pdf", width = 8, height = 4)
+
+#rtide package 
+#make separate plot below that's just tides align with 
+
+#plot of hallpercent of one oyster with datetime range
+
+halltide=loadComboGape('D.M.2.1047')
+
+par(mfrow = c(2,1), mar = c(4,6,2,1))
+plot(as.POSIXct(halltide$DateTime), halltide$hallpercent, type = 'l', col = 2,
+	ylab = 'Gape opening %',
+	xlab = 'Date',
+	las = 1,
+	main = 'P.E.5.1076',
+	xlim=as.POSIXct(c("2022-07-30 00:00:00", "2022-08-21 00:00:00")))
+	
+plot(tides$DateTime,tides$TideHT.m, type='l',
+     xlab="Date",
+     ylab="Tide height (m)",
+     xlim=as.POSIXct(c("2022-07-30 00:00:00", "2022-08-21 00:00:00")))
+dev.off()
+
+halltide=merge(halltide,tides, by="DateTime")
+
+max_first  <- max(halltide$hallpercent,na.rm=T)   # Specify max of first y axis
+max_second <- max(halltide$TideHT.m) # Specify max of second y axis
+min_first  <- min(halltide$hallpercent, na.rm=T)   # Specify min of first y axis
+min_second <- min(halltide$TideHT.m) # Specify min of second y axis
+
+# scale and shift variables calculated based on desired mins and maxes
+scale = (max_second - min_second)/(max_first - min_first)
+shift = min_first - min_second
+
+ggplot(halltide, aes(x = DateTime, y = hallpercent)) +
+  geom_line(aes(color="Gape opening %")) +
+  geom_line(aes(y = inv_scale_function(TideHT.m,scale,shift), color = "Tide Height (m)")) +
+  #scale_x_continuous(breaks = seq(0, 336, 24)) +
+  scale_y_continuous(limits = c(min_first, max_first), sec.axis = sec_axis(~scale_function(., scale, shift), name="Tide Height (m)")) +
+  labs(x = "Date", y = "Gape opening %", color = "") +
+  scale_color_manual(values = c("black", "blue"))+
+  theme_classic()
+  #scale_x_datetime(limits = as.POSIXct(strptime(c("2022-07-30 00:00:00", "2022-08-22 00:00:00"),format = "%Y-%m-%d %H:%M")))
+
+ggsave(path=plots, "D.M.2.1047_tides.png", width=6, height=6)
+  
+#find tidal elevation of oysters deployed, in tidal dataset- make column that says if oysters are under or out of water depending on tide height and shore height. Column of time stamps and column of yes/no for in/out of water. 
+```
+
+#temp
+```{r}
+halltemp=loadComboGape('D.M.2.1047')
+
+max_first  <- max(halltemp$hallpercent,na.rm=T)   # Specify max of first y axis
+max_second <- max(halltemp$Temp.C,na.rm=T) # Specify max of second y axis
+min_first  <- min(halltemp$hallpercent, na.rm=T)   # Specify min of first y axis
+min_second <- min(halltemp$Temp.C,na.rm=T) # Specify min of second y axis
+
+# scale and shift variables calculated based on desired mins and maxes
+scale = (max_second - min_second)/(max_first - min_first)
+shift = min_first - min_second
+
+ggplot(halltemp, aes(x = DateTime, y = hallpercent)) +
+  geom_line(aes(color="Gape opening %")) +
+  geom_line(aes(y = inv_scale_function(Temp.C,scale,shift), color = "Temp (C)")) +
+  #scale_x_continuous(breaks = seq(0, 336, 24)) +
+  scale_y_continuous(limits = c(min_first, max_first), sec.axis = sec_axis(~scale_function(., scale, shift), name="Temp (C)")) +
+  labs(x = "Date", y = "Gape opening %", color = "") +
+  scale_color_manual(values = c("black", "red"))+
+  theme_classic()
+  #scale_x_datetime(limits = as.POSIXct(strptime(c("2022-07-30 00:00:00", "2022-10-06 00:00:00"),format = "%Y-%m-%d %H:%M")))
+
+ggsave(path=plots, "D.M.2.1047_temp.png", width=6, height=6)
+
+########### Temp across treatments/sites ##############
+ggplot(allgapemeta, aes(Treatment,Temp.C))+
+  geom_boxplot()+
+  scale_y_continuous(limits = c(0, 30))+
+  theme_classic()
+
+ggsave(path=plots, "Temp vs treatments.png",width=6, height=6)
+
+ggplot(allgapemeta, aes(Site,Temp.C))+
+  geom_boxplot()+
+  scale_y_continuous(limits = c(0, 30))+
+  theme_classic()
+
+ggsave(path=plots, "Temp_vs_sites.png",width=6, height=6)
+
+#############Temp vs seasons ################
+tempwet <- allgapemeta %>%
+    # filter((DateTime > '2022-05-01 00:00:00') &
+    #         (DateTime<"2022-12-31 00:00:00")) %>%
+    filter((DateTime > '2022-12-31 00:00:00') &
+        (DateTime<"2023-04-01 00:00:00"))
+
+tempdry <- allgapemeta %>%
+  filter((DateTime>"2022-05-01 00:00:00"& DateTime<"2022-12-31 00:00:00")|(DateTime>"2023-04-01 00:00:00"))
+
+tempseason<- bind_rows(tempwet, tempdry, .id = 'Season')
+tempseason=tempseason %>% 
+  mutate(Season = recode(Season, '1' = 'Wet', '2' = 'Dry'))
+
+ggplot(tempseason, aes(Season,Temp.C))+
+  geom_boxplot()+
+  scale_y_continuous(limits = c(0, 30))+
+  theme_classic()
+
+ggsave(path=plots, "Temp_vs_season.png", width=6, height=6)
+
+######### Temp vs seasons plus treatments/sites #######
+ggplot(tempseason, aes(Treatment,Temp.C, fill=Season))+
+  geom_boxplot()+
+  scale_y_continuous(limits = c(0, 30))+
+  theme_classic()
+
+ggsave(path=plots, "Temp_vs_season_trmt.png", width=6, height=6)
+
+ggplot(tempseason, aes(Site,Temp.C, fill=Season))+
+  geom_boxplot()+
+  scale_y_continuous(limits = c(0, 30))+
+  theme_classic()
+
+ggsave(path=plots, "Temp_vs_season_site.png", width=6, height=6)
+
+```
+
+#plot field deaths by site or treatment
+```{r}
+yesdead<-metafile %>%
+  group_by(Site, Treatment, Fielddeath) %>% 
+  summarise(n=n()) %>% 
+  group_by(Fielddeath) %>% 
+  mutate(prop=n/sum(n)) %>% 
+  filter(Fielddeath %in% "Yes") 
+
+yesdeadtreatment<-yesdead %>% 
+  group_by(Treatment) %>% 
+  summarise(n=sum(n))
+
+yesdeadsite<-yesdead %>% 
+  group_by(Site) %>% 
+  summarise(n=sum(n))
+
+esquisse::esquisser()
+
+ggplot(yesdeadtreatment, aes(Treatment, n))+
+  geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  labs(y="Number of field deaths")
+ggsave(path=plots, "Field_deaths_treatment.png", width=6, height=6)
+
+ggplot(yesdeadsite, aes(Site, n))+
+  geom_bar(position="dodge", stat="summary", fun="mean")+
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  labs(y="Number of field deaths")
+ggsave(path=plots, "Field_deaths_site.png", width=6, height=6)
+
+```
+
+#Subset data by every 10th row, treatment, and site. Plot on timescale
+```{r}
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+
+#take every 50th row from dataframe
+my10MinuteSubset = allgapemeta[seq(1,nrow(allgapemeta), by = 50),] 
+
+cols = gg_color_hue(length(levels(my10MinuteSubset$Code)))
+cols[levels(my10MinuteSubset$SN)=="W.M.2.1020"]="red"
+
+highlight_types <- c('W.M.2.1020')
+
+my10MinuteSubset %>%
+  drop_na(binary) %>% 
+  #use filter to subset the rows based on the LOCATION column values
+  #filter(SN == c("SN150", "SN138", "SN164", "SN143","SN191","")) %>% 
+  #remove SN115 bc just looks closed for a couple days at the end. Remove SN112 bc only data in august
+  # dplyr::filter(SN!="SN194")%>%
+  # dplyr::filter(Site=="DeAnza")%>%
+  # dplyr::filter(Treatment=="Eelgrass")%>%
+  # dplyr::filter(!is.na(binary)) %>%
+  ggplot(aes(x = DateTime, col=Code))+
+    #fill=factor(ifelse(SN=="SN150","Highlighted","Normal"))))+
+    #geom_smooth(x=Temp.C)+
+    geom_jitter(aes(y = binary), shape = 1, position = position_dodge(width=0.3))+
+    #geom_line(aes(y=Prediction))+
+    #geom_beeswarm(dodge.width=0,cex=2,groupOnX=FALSE)+
+    facet_grid(Treatment~.)+
+    scale_x_datetime(date_labels = "%b", breaks = "1 month") +
+    #scale_colour_manual(values=cols) +
+    scale_y_discrete(labels=c("0" = "Closed", "1" = "Open"))+
+    labs(y="Gape", x="")+
+  theme_bw()+
+  #remove SN legend, take out grid lines but keep facet lines. Change font sizes
+  theme(legend.position = "none", axis.line=element_line(), panel.border = element_rect(color = "black",fill = NA,size = 1), panel.grid = element_blank(), axis.text = element_text(size = 20), axis.title = element_text(size = 30), strip.text = element_text(size = 20))
+
+ggsave(path=plots,"gapealltreatment.png", width = 10, height = 6)
+
+ggplot(my10MinuteSubset, aes(x = DateTime, Prediction))+
+  geom_line(group=1)+
+  theme_bw()+
+  scale_x_datetime(labels=date_format("%Y %H:%M"), breaks = "1 hour") 
+plot(my10MinuteSubset$DateTime, my10MinuteSubset$Prediction)
+#Add tide data to graph (can overlay or be above), can put shaded regions on plots for low tide. 
+my10MinuteSubset$Code=as.factor(my10MinuteSubset$Code)
+my10MinuteSubset %>%
+  #dplyr::filter(Site=="DeAnza")%>%
+  dplyr::filter(Code=="W.E.5.1002")%>% 
+  #dplyr::filter(Treatment=="Eelgrass")%>%
+  dplyr::filter(!is.na(binary)) %>%
+  ggplot(aes(x = DateTime, col=Code))+
+    #geom_smooth(x=Temp.C)+
+    geom_jitter(aes(y = binary), shape = 1, position = position_dodge(width=0.3))+
+    #geom_line(aes(y=Prediction))+
+    #geom_beeswarm(dodge.width=0,cex=2,groupOnX=FALSE)+
+    #facet_grid(Treatment~.)+
+    #scale_x_datetime(date_labels = "%b", breaks = "1 month") +
+    #scale_colour_manual(values=group.colors) +
+    scale_y_discrete(labels=c("0" = "Closed", "1" = "Open"))+
+    #labs(y="Gape", x="")+
+    theme_bw()+
+  #remove SN legend, take out grid lines but keep facet lines. Change font sizes
+  theme(legend.position = "none", axis.line=element_line(), panel.border = element_rect(color = "black",fill = NA,size = 1), panel.grid = element_blank(), axis.text = element_text(size = 20), axis.title = element_text(size = 30), strip.text = element_text(size = 20))
+```
+
+#only color one oyster
+```{r}
+gg_color_hue <- function(n) {
+  hues = seq(15, 375, length = n + 1)
+  hcl(h = hues, l = 65, c = 100)[1:n]
+}
+
+cols = gg_color_hue(length(levels(my10MinuteSubset$Code)))
+cols[levels(my10MinuteSubset$SN)=="W.M.2.1020"]="red"
+
+highlight_types <- c('W.M.2.1020')
+
+subsetnoNAs=my10MinuteSubset %>% 
+  drop_na(binary)
+  
+  ggplot(aes(x = DateTime,col=Code))+
+       geom_point(data=subsetnoNAs[which(!(subsetnoNAs$Code %in% highlight_types)),],aes(y=binary),color='gray75', size=2)+
+    geom_point(data=subsetnoNAs[which(subsetnoNAs$Code %in% highlight_types),],aes(color=Code,y=binary), size=2) +
+    #geom_jitter(aes(y = binary), shape = 1, position = position_dodge(width=0.3))+
+    facet_grid(Treatment~.)+
+    scale_x_datetime(date_labels = "%b", breaks = "1 month") +
+    scale_y_discrete(labels=c("0" = "Closed", "1" = "Open"))+
+    labs(y="Gape", x="")+
+  theme_bw()+
+  #remove SN legend, take out grid lines but keep facet lines. Change font sizes
+  theme(legend.position = "none", axis.line=element_line(), panel.border = element_rect(color = "black",fill = NA,size = 1), panel.grid = element_blank(), axis.text = element_text(size = 20), axis.title = element_text(size = 30), strip.text = element_text(size = 20))
+
+ggsave(path=plots,"gapeallsites1020.png", width = 10, height = 6)
+
+
+
+```
+
+#graph binary plot per oyster
+```{r}
+#won't print out every oyster bc if first binary is NA then skips over entire thing. But prints many of them. Just to check for ones that were closed for extended periods of time to pull out of allgape graph for presentation.
+subcode = unique(my10MinuteSubset[,'Code'])
+
+for (oy in subcode){
+  subdata=my10MinuteSubset[my10MinuteSubset$Code == oy,]
+  if(!is.na(subdata$binary)) {
+    subdata %>%
+    dplyr::filter(!is.na(binary)) %>%
+    ggplot(aes(x = DateTime))+
+      geom_jitter(aes(y = binary), shape = 1, position = position_dodge(width=0.3))+
+      scale_y_discrete(labels=c("0" = "Closed", "1" = "Open"))+
+      theme_bw()+
+    #remove SN legend, take out grid lines but keep facet lines. Change font sizes
+    theme(legend.position = "none", axis.line=element_line(), panel.border = element_rect(color = "black",fill = NA,size = 1), panel.grid = element_blank(), axis.text = element_text(size = 20), axis.title = element_text(size = 30), strip.text = element_text(size = 20))
+    
+    ggsave(path=plots, file=paste0("gape",oy,".png"), width = 10, height = 6)
+  }
+}
+
+for (oy in subcode){
+  subdata=my10MinuteSubset[my10MinuteSubset$Code == oy,]
+  subdata %>%
+      ggplot(aes(x = DateTime))+
+        geom_jitter(aes(y = binary), shape = 1, position = position_dodge(width=0.3))+
+        scale_y_discrete(labels=c("0" = "Closed", "1" = "Open"))+
+        theme_bw()+
+      #remove SN legend, take out grid lines but keep facet lines. Change font sizes
+      theme(legend.position = "none", axis.line=element_line(), panel.border = element_rect(color = "black",fill = NA,size = 1), panel.grid = element_blank(), axis.text = element_text(size = 20), axis.title = element_text(size = 30), strip.text = element_text(size = 20))
+      
+    ggsave(path=plots, file=paste0("gape",oy,".png"), width = 10, height = 6)
+}
+
+```
+
+#calculate binary proportions
+```{r}
+#calculate number of non-NA values, find fraction that are 1s and fraction that are 0s to get %closed/open. 
+binarycounts=data.frame(tabyl(allgapemeta, Site, Treatment, binary))
+#rename Site column
+binarycounts$Site=binarycounts$X0.Site
+
+#generate with percents
+tabyl(allgapemeta, binary, Treatment) %>%
+  adorn_percentages("col") %>%
+  adorn_pct_formatting(digits = 1)
+
+#Remove extra columns
+binarycounts = subset(binarycounts, select = -c(X1.Site,X0.Site) )
+
+#change to long format. Choose columns to gather. 
+binary_long <- gather(binarycounts, Treatment, Count, X0.Eelgrass:X1.Oyster, factor_key=TRUE)
+
+#add 0s and 1s column and rename Treatment factors
+binary_long <-binary_long %>%
+  mutate(binary = case_when(
+    str_detect(Treatment, "X0") ~ "0",
+    str_detect(Treatment, "X1") ~ "1",)) %>% 
+    #str_detect(Treatment, "NA_") ~ "NA", #if include NAs then move )) %>% down
+    mutate(Treatment = case_when(
+    str_detect(Treatment, "Eelgrass") ~ "Eelgrass",
+    str_detect(Treatment, "Mud") ~ "Mud",
+    str_detect(Treatment, "Oyster") ~ "Oyster",)) 
+
+#make NAs true NAs
+#binary_long$binary[binary_long$binary=="NA"] <- NA
+
+#change order of binary in barplot
+binary_long$binary=factor(binary_long$binary, levels=c("1","0","NA"))
+#change order of sites
+binary_long$Site <- factor(binary_long$Site,levels = c("Westcliff", "PCH", "DeAnza", "Shellmaker"))
+#change order of treatment
+binary_long$Treatment <- factor(binary_long$Treatment,levels = c("Oyster", "Eelgrass", "Mud"))
+
+#calculate percent open/closed with NAs
+binary_long=as.data.frame(binary_long %>% 
+  group_by(Treatment) %>% 
+  mutate(percent=Count/sum(Count)))
+  
+#remove NAs from binary bc not included in graph. get percent separated by site and 0s and 1s.
+#calculate percents without NAs all sites
+binary_long_noNAallsites=binary_long %>% 
+  na.omit() %>% 
+  group_by(Treatment) %>%
+  mutate(percent = Count/sum(Count))
+
+#No NAs De Anza only 
+binary_long_noNADA=binary_long %>% 
+  na.omit() %>% 
+  group_by(Site="De Anza") %>%
+  group_by(Treatment, .add=T) %>%
+  mutate(percent = Count/sum(Count))
+```
+
+#graphing binary barplots
+```{r}
+#graph percent stacked. separted by site
+ggplot(binary_long_noNAallsites, aes(Site, Count, fill=binary))+
+  geom_bar(stat="identity", position="fill")+
+  theme_classic()+
+  scale_fill_discrete(labels=c('Open', 'Closed'), name="Valve gape")+
+  labs(y="Valve gape")
+
+#separated by treatment percent stacked
+ggplot(binary_long_noNAallsites, aes(Treatment, Count, fill=binary))+
+  geom_bar(stat="identity", position="fill")+
+  theme_classic()+
+  scale_fill_discrete(labels=c('Open', 'Closed'), name="Valve gape")+
+  labs(y="Valve gape")
+
+#separated by treatment stacked
+binary_longtest=as.data.frame(binary_long %>% 
+  group_by(Treatment, binary) %>% 
+  summarise(percentsum=sum(percent)))
+  #dplyr::filter(binary==c("0","1"))) 
+
+#graph so no black bars between groupings on stacked barplot
+binary_longtest %>% 
+  dplyr::filter(!is.na(binary)) %>% 
+ggplot(aes(Treatment, percentsum, fill=factor(binary, levels=c("1","0"))))+
+  geom_bar(stat="identity", position="stack", col="black")+
+  theme_classic()+
+  scale_fill_discrete(labels=c('Open', 'Closed'), name="Valve gape")+
+  labs(y="Proportion valve gape")+
+  ylim(0,1.0)
+
+binary_long %>% 
+  #dplyr::filter(!is.na(binary)) %>% 
+ggplot(aes(Treatment, Count, fill=binary))+
+  geom_bar(stat="identity", position="stack", col="black")+
+  theme_classic()+
+  scale_fill_discrete(labels=c('Open', 'Closed'), name="Valve gape")+
+  labs(y="Valve gape")+
+  ylim(0,1.0)
+
+#separated by treatment and site
+ggplot(binary_long_noNAallsites, aes(Treatment, Count, fill=binary))+
+  geom_bar(stat="identity", position="fill")+
+  theme_classic()+
+  scale_fill_discrete(labels=c('Open', 'Closed'), name="Valve gape")+
+  labs(y="Valve gape")+
+  facet_grid(~Site)
+
+#position=fill for percent stacked, position=dodge for side-by-side, position=stack for stacked. 
+#rle- function that tells how long value stays 1 or 0 in dataset. Get list of row index and how long it stays at value. 
+#in future- potentially filter out brief open/closed numbers. Run low pass filter over hall percentage values and remove brief closing periods. then can line up with tide height to show they're open when tide is high and closed when tide is low. Can try to correlated temp with gape values too. 
+
+#Use metadata to plot all sensors from oyster treatment (plot hall %, make time series plot). 3 panel plot- seagrass, mud, oyster treatment for De Anza, do for each site. Or all on same plot w/ diff colors for diff treatments.   
+#ideally also align with temp data/tide data. Can be in separate datasets just also needs to have POSIXxt to align timestamps. 
+#rtide package that generates time series of predicated tides. Use long beach (LA) harbor tide station. 
+
+#can have giant data file with all sensor data. 
+
+#will need to calculate average open for individuals over time. 
+```
+
+#ANOVA on valve gape vs treatment
+```{r}
+# valvetreatment.glm <- binary_long %>% 
+#   dplyr::filter(binary==0) %>% 
+#   #group_by(Treatment) %>% 
+#   #summarise(percentsum=sum(percent)) %>% 
+valvetreatment.glm <-  glm(formula = percentclosed ~ Treatment,
+                   data = binary_long,
+                   family = "binomial")
+
+
+```
+
+
+
+```{r lukeScratch2, eval = FALSE}
+require(nlme)
+gapecalibfile = paste0(localpath,'Newport_SSINP/calibration/202303_calibrations_ostrea - Sheet1.csv')
+
+gapeCalibs = read.csv(gapecalibfile)
+# Reshape to long format
+gC = reshape(gapeCalibs, varying = list(c('Reading1','Reading2','Reading3')),
+				direction = 'long')
+# Remove the saturated sensors P.M.3.1069 and D.M.2.1052
+gC = gC[-(which(gC$Code == 'P.M.3.1069')), ]
+gC = gC[-(which(gC$Code == 'D.M.2.1052')), ]
+
+gC2 = groupedData(Reading1~Distance_mm|Code/time,data=gC)
+		
+
+```
+
+```{r lukeScratch1, eval = FALSE}
+# Messing around with the Hall data for growing oysters
+
+# gapedat should hold data for oyster W.O.5.1016
+oy="W.O.5.1016"
+gapedat=loadComboGape(oy)
+gapedat$DateTime = as.POSIXct(gapedat$DateTime, tz='UTC', format="%Y-%m-%d %H:%M:%S")
+
+#plot(gapedat$DateTime, gapedat$Hall, type = 'l')
+
+# It looks like the lower bound starts trending up quicker around Aug 1 2022
+d1 = as.POSIXct('2022-08-01 00:00')
+
+gape1 = gapedat[gapedat$DateTime >= d1, c('DateTime','Hall','hallpercent')]
+
+plot(gape1$DateTime, gape1$Hall, type = 'l')
+
+
+########################
+# Less fancy, just grab the min at the start and end of the series, and
+# fit a line to those two points to use as the correction
+min1 = which.min(gape1$Hall[1:1440])  # 1 day of data at 1min interval = 1440
+lastday = gape1[(nrow(gape1)-1440):nrow(gape1),] # subset last day of data
+min2 = which.min(lastday$Hall)
+bottomline = rbind(gape1[min1,], lastday[min2,])
+# Fit a straight line between the 2 minimum values
+mod1 = lm(Hall~DateTime,data = bottomline)
+# Generate a set of best fit points along the line, for each original time point
+newy = predict(mod1, newdata = gape1[c('DateTime','Hall')])
+# Subtract off the initial minimum Hall value so that newy2 represents the
+# offset below each point in the dataset
+newy2 = newy - bottomline$Hall[1]
+# Subtract off newy2 (offset) from each original Hall value. The offset will
+# be larger for later dates if the minimum data were trending upwards
+gape1$Hall2 = gape1$Hall - newy2
+# Show the results
+plot(gape1$DateTime, gape1$Hall, type = 'l') # Raw Hall data
+abline(mod1, col = 1) # the regression line
+lines(gape1$DateTime, gape1$Hall2, col = 4) # The adjusted Hall data
+abline(h = bottomline$Hall[1], col = 4)
+
+# Comments after playing with this: The simple algorithm does the thing I 
+# expect it to do, adjusting the rising Hall values down to a flat baseline. 
+# However, what you also see is that the maximum (presumed 100% opening) values
+# start to shrink through time after the downward correction. This happens 
+# because the actual range of Hall values is getting smaller as the animal 
+# grows and the baseline closed value shifts upwards. This is a result of the
+# curvelinear response of the hall effect sensor and the fact that when you
+# start with the magnet further from the Hall sensor in the closed position,
+# any opening of the shell results in a comparatively smaller change in the
+# Hall value, because you're starting in a less-sensitive portion of the Hall
+# sensor's range. Therefore it may be counterproductive to adjust these Hall
+# signals down to have a flat baseline, because it will later result in a
+# calculation of a smaller % opening if the total range is shrinking through 
+# time. Instead we want to keep the shifting baseline information intact,
+# and use it alongside sensor calibration data that come from different starting
+# values to adjust the estimated shell opening values into percentages. 
+
+
+
+```
+
+### One time use for making allgapemeta file
+####list individal gape files and combine into one csv per SN, cut out specific times from meta data that shouldn't be used
 ```{r get-list-of-files-and-make-big-csv, echo=FALSE}
 #use unique() on first column. Save result as "serialnumber"
 serialnumber=unique(metafile[,1])
@@ -992,7 +1840,6 @@ for (oy in (oystercode) ){
       if(!file.exists(gapepath)) {
        next
       }
-    #dir(path=gapepath, full.names = TRUE, pattern=paste0(i,"_GAPE.csv"))
     #generate list of file names
     gapecombo=dir(path=gapepath, full.names = TRUE, pattern=paste0(i,"_GAPE.csv"))
       if(length(gapecombo)==0){
@@ -1036,8 +1883,8 @@ for (oy in (oystercode) ){
 } # end of oystercode for loop 
 ```
 
-#write over combogape files to add in percent gape and percentiles for
-#binary graphing
+####write over combogape files to add in percent gape and percentiles for
+####binary graphing
 ```{r calcPercentageGape,echo=showcode, eval = evalAll}
 #get data from calibration. Generate set of regression coefficients and put them in cRegress. Use cRegress to do % calculation.
 oystercode = unique(metafile[,'Code'])
@@ -1078,7 +1925,7 @@ for(oy in (oystercode)){
 }
 ```
 
-#Remove outliers for specific oysters.
+###Remove outliers for specific oysters.
 ```{r}
 # Manually removed from combogape files on comp that were all bad
 # If not manually removed, code for removing from allgape is below
@@ -1372,7 +2219,7 @@ plot(gapedat$DateTime, gapedat$Hall, type="l") #check to make sure worked
 write.csv(gapedat, paste0(combogapefile, "P.E.5.1076", "_combogape.csv"), row.names=FALSE)
 ```
 
-#gape test plots
+###gape test plots
 ```{r testPlotsGape, eval=FALSE}
 
 for (oy in (oystercode)){
@@ -1389,25 +2236,9 @@ for (oy in (oystercode)){
   dev.off()
   remove(testdata)
  }
-
-# #for (oy in (oystercode)){
-#   filecheck = file.path(paste0(combogapefile,oy,'_combogape.csv'))
-#   if(!file.exists(filecheck)) {
-#    next
-#   }
-#   #png(file=paste0(plots,"hallpercenttest/W.O.5.1016/",oy,"_reusemaxhall_test.png"), width=800, height=600)
-#   testdata=loadComboGape(oy)
-#     if(all(is.na(testdata[,'Hall']))){
-#     next
-#   }
-#   plot2HallFunction(testdata)
-#   #dev.off()
-#   remove(testdata)
-# }
-
 ```
 
-#combine combogape files (w/hallpercent, percentile, binary columns) into one giant dataset. Combine with metadata
+###Create allgapemeta, combine combogape files (w/hallpercent, percentile, binary columns) into one giant dataset. Combine with metadata. Save dataset
 ```{r combine-all-gape-files-and-add-metadata}
 #combine all data frames into 1
 allgape <- list.files(path=combogapefile, full.names = T) %>% 
@@ -1421,20 +2252,6 @@ allgape$DateTime=as.POSIXct(allgape$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%
 #combine metafile and allgape by SN to get treatment/site for each sensor
 allgapemeta<-merge(allgape,metafile[, c("Site", "Treatment","Alive","Code")], by="Code")
 
-#change order of treatment
-allgapemeta$Treatment <- factor(allgapemeta$Treatment,levels = c("Oyster", "Eelgrass", "Mud"))
-#make binary column categorical
-allgapemeta$binary=as.factor(allgapemeta$binary)
-#change order of sites
-allgapemeta$Site <- factor(allgapemeta$Site,levels = c("Westcliff", "PCH", "DeAnza", "Shellmaker"))
-#make code factor
-allgapemeta$Code<-as.factor(allgapemeta$Code)
-
-remove(allgape)
-```
-
-#remove bad oysters from all gape if not manually removed from files
-```{r}
 #Remove bad gape oysters
 allgapemeta=allgapemeta%>%
   dplyr::filter(
@@ -1469,527 +2286,43 @@ allgapemeta=allgapemeta%>%
     Code!="P.M.1.1097" & #sensor narrow range
     Code!="S.M.1.1086" & #probably dead oyster
     Code!="W.E.2.1006" ) #sensor saturated
-```
 
-#calculate proportion open/closed for each code, then average them per treatment/site
-```{r}
-#average by site and treatment to get average %open/closed for each oyster in each site/treatment
-gapebinarypercent <- allgapemeta %>%
-  group_by(Code) %>% #do calculations by oyster code
-  drop_na(binary) %>% 
-  group_by(Treatment,Site) %>% 
-  count(binary) %>% 
-  mutate(percentopen=n/sum(n))
-
-gapebinaryopen=gapebinarypercent[gapebinarypercent$binary == '1', ]
-
-cbPalette <- c("#E69F00", "#56B4E9", "#009E73", "#0072B2")
-
-ggplot(gapebinaryopen, aes(Treatment, percentopen, fill = Treatment)) +      # ggplot2 barplot with error bars
-  geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
-  stat_summary(geom = "errorbar", fun.data = mean_se, position = "dodge",width = 0.2, size = 0.75)+
-  ylim(0,1)+
-  theme_classic()+
-  labs(y="Proportion of open valves")+
-  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 30))
-
-ggsave(path=plots, "proportion_open_treatment.png", width=7, height=6)
-
-ggplot(gapebinaryopen, aes(Site, percentopen))+
-  #geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
-  geom_bar(position="dodge", stat="summary", fun="mean", fill=cbPalette)+
-  #check that it's standard error
-  #geom_errorbar( aes(x=name, ymin=value-sd, ymax=value+sd), width=0.4, colour="orange", alpha=0.9, size=1.3)
-  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
-  ylim(0,1)+
-  theme_classic()+
-  labs(y="Proportion of open valves")+
-  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 30))
-
-ggsave(path=plots, "proportion_open_site.png", width=7, height=6)
-
-ggplot(gapebinarypercent, aes(Treatment, percentopen, fill=binary))+
-  geom_bar(stat="identity", position="fill")+
-  theme_classic()+
-  scale_fill_discrete(labels=c('Open', 'Closed'), name="Valve gape")+
-  labs(y="Valve gape")
-
-ggplot(gapebinarypercent, aes(Site, n, fill=binary))+
-  geom_bar(stat="identity", position="fill")+
-  theme_classic()+
-  scale_fill_discrete(labels=c('Open', 'Closed'), name="Valve gape")+
-  labs(y="Valve gape")
-```
-
-#calculate proportion open/closed just for 2022
-```{r}
-gapebinarypercentnov <- allgapemeta %>%
-    # filter((DateTime > '2022-05-01 00:00:00') &
-    #         (DateTime<"2022-12-31 00:00:00")) %>%
-    filter((DateTime > '2022-12-31 00:00:00') &
-        (DateTime<"2023-07-01 00:00:00")) %>%
-  group_by(Code) %>% #do calculations by oyster code
-  drop_na(binary) %>% 
-  group_by(Treatment,Site) %>% 
-  count(binary) %>% 
-  mutate(percentopen=n/sum(n))
-
-gapebinarypercentnov=gapebinarypercentnov[gapebinarypercentnov$binary == '1', ]
-
-ggplot(gapebinarypercentnov, aes(Treatment, percentopen))+
-  geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
-  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
-  ylim(0,1)+
-  theme_classic()+
-  labs(y="Proportion of open valves")+
-  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 30))
-
-ggsave(path=plots, "proportion_open_treatment_2023.png", width=6, height=6)
-```
-
-#calculate 1 percent closed value for each code, graph and glm
-```{r}
-#calculate percent closed column 
-allgapemetapercentopen=as.data.frame(allgapemeta %>% 
-  group_by(Code, binary) %>% 
-  summarise(n = n(), 
-            Treatment=unique(Treatment), #keep treatment 
-            Site=unique(Site), 
-            Died=unique(Died)) %>%     #keep site
-  mutate(percentopen = n/sum(n)) %>% 
-  dplyr::filter(binary=="1") %>% 
-  ungroup () 
-  )
-
-#graph? eelgrass closed most, then oyster, then mud
-ggplot(allgapemetapercentopen, aes(Treatment, percentopen))+
-  geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
-  stat_summary(fun.data = mean_cl_boot, geom = "errorbar", width = 0.2, size = 0.75)+
-  ylim(0,1)+
-  theme_classic()+
-  labs(y="Proportion of open valves")+
-  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 30))
-
-ggsave("proportion_open_treatment.png", width=6, height=6)
-
-percentopenmodel=glm(log(percentopen)~Treatment, data=allgapemetapercentopen, family="binomial")
-
-summary(percentopenmodel)
-#not significantly different
-
-#look at percent open data. Still not sig
-percentopenmodel=glm(percentopen~Treatment, data=allgapemetapercentclosed, family="binomial")
-
-summary(percentopenmodel)
-#same
-
-```
-
-#add tide levels
-```{r}
-allgapemetatides <- 
-  left_join(allgapemeta, julyaugusttides, by = 'DateTime') #%>% 
-  #mutate(y = replace(y, is.na(y), 0))
-
-##plot tides
-julyaugusttides$DateTime=as.POSIXct(julyaugusttides$Date.Time, tz="UTC", format="%Y-%m-%d %H:%M:%S")
-julyaugusttides = subset(julyaugusttides, select = -Date.Time)
-
-ggplot(julyaugusttides, aes(DateTime, Prediction))+
-  geom_line()+
-  #xlim(as.Date(c("2022-07-18", "2022-08-10")), format="%Y/%m/%d")
-  scale_x_datetime(limits = as.POSIXct(strptime(c("2022-07-18 00:00", "2022-08-10 23:59"),format = "%Y-%m-%d %H:%M")))+
-  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), panel.background = element_blank(), axis.line = element_line(colour = "black"))+
-  labs(x="Date", y="Tide height (ft)")
-ggsave("julyaugusttides.pdf", width = 8, height = 4)
-
-
-#find tidal elevation of oysters deployed, in tidal dataset- make column that says if oysters are under or out of water depending on tide height and shore height. Column of time stamps and column of yes/no for in/out of water. 
-```
-
-#Subset data by every 10th row, treatment, and site. Plot on timescale
-```{r}
-gg_color_hue <- function(n) {
-  hues = seq(15, 375, length = n + 1)
-  hcl(h = hues, l = 65, c = 100)[1:n]
-}
-
-#take every 50th row from dataframe
-my10MinuteSubset = allgapemeta[seq(1,nrow(allgapemeta), by = 50),] 
-
-cols = gg_color_hue(length(levels(my10MinuteSubset$Code)))
-cols[levels(my10MinuteSubset$SN)=="W.M.2.1020"]="red"
-
-highlight_types <- c('W.M.2.1020')
-
-my10MinuteSubset %>%
-  drop_na(binary) %>% 
-  #use filter to subset the rows based on the LOCATION column values
-  #filter(SN == c("SN150", "SN138", "SN164", "SN143","SN191","")) %>% 
-  #remove SN115 bc just looks closed for a couple days at the end. Remove SN112 bc only data in august
-  # dplyr::filter(SN!="SN194")%>%
-  # dplyr::filter(Site=="DeAnza")%>%
-  # dplyr::filter(Treatment=="Eelgrass")%>%
-  # dplyr::filter(!is.na(binary)) %>%
-  ggplot(aes(x = DateTime, col=Code))+
-    #fill=factor(ifelse(SN=="SN150","Highlighted","Normal"))))+
-    #geom_smooth(x=Temp.C)+
-    geom_jitter(aes(y = binary), shape = 1, position = position_dodge(width=0.3))+
-    #geom_line(aes(y=Prediction))+
-    #geom_beeswarm(dodge.width=0,cex=2,groupOnX=FALSE)+
-    facet_grid(Treatment~.)+
-    scale_x_datetime(date_labels = "%b", breaks = "1 month") +
-    #scale_colour_manual(values=cols) +
-    scale_y_discrete(labels=c("0" = "Closed", "1" = "Open"))+
-    labs(y="Gape", x="")+
-  theme_bw()+
-  #remove SN legend, take out grid lines but keep facet lines. Change font sizes
-  theme(legend.position = "none", axis.line=element_line(), panel.border = element_rect(color = "black",fill = NA,size = 1), panel.grid = element_blank(), axis.text = element_text(size = 20), axis.title = element_text(size = 30), strip.text = element_text(size = 20))
-
-ggsave(path=plots,"gapealltreatment.png", width = 10, height = 6)
-
-ggplot(my10MinuteSubset, aes(x = DateTime, Prediction))+
-  geom_line(group=1)+
-  theme_bw()+
-  scale_x_datetime(labels=date_format("%Y %H:%M"), breaks = "1 hour") 
-plot(my10MinuteSubset$DateTime, my10MinuteSubset$Prediction)
-#Add tide data to graph (can overlay or be above), can put shaded regions on plots for low tide. 
-my10MinuteSubset$Code=as.factor(my10MinuteSubset$Code)
-my10MinuteSubset %>%
-  #dplyr::filter(Site=="DeAnza")%>%
-  dplyr::filter(Code=="W.E.5.1002")%>% 
-  #dplyr::filter(Treatment=="Eelgrass")%>%
-  dplyr::filter(!is.na(binary)) %>%
-  ggplot(aes(x = DateTime, col=Code))+
-    #geom_smooth(x=Temp.C)+
-    geom_jitter(aes(y = binary), shape = 1, position = position_dodge(width=0.3))+
-    #geom_line(aes(y=Prediction))+
-    #geom_beeswarm(dodge.width=0,cex=2,groupOnX=FALSE)+
-    #facet_grid(Treatment~.)+
-    #scale_x_datetime(date_labels = "%b", breaks = "1 month") +
-    #scale_colour_manual(values=group.colors) +
-    scale_y_discrete(labels=c("0" = "Closed", "1" = "Open"))+
-    #labs(y="Gape", x="")+
-    theme_bw()+
-  #remove SN legend, take out grid lines but keep facet lines. Change font sizes
-  theme(legend.position = "none", axis.line=element_line(), panel.border = element_rect(color = "black",fill = NA,size = 1), panel.grid = element_blank(), axis.text = element_text(size = 20), axis.title = element_text(size = 30), strip.text = element_text(size = 20))
-```
-
-#only color one oyster
-```{r}
-gg_color_hue <- function(n) {
-  hues = seq(15, 375, length = n + 1)
-  hcl(h = hues, l = 65, c = 100)[1:n]
-}
-
-cols = gg_color_hue(length(levels(my10MinuteSubset$Code)))
-cols[levels(my10MinuteSubset$SN)=="W.M.2.1020"]="red"
-
-highlight_types <- c('W.M.2.1020')
-
-subsetnoNAs=my10MinuteSubset %>% 
-  drop_na(binary)
-  
-  ggplot(aes(x = DateTime,col=Code))+
-       geom_point(data=subsetnoNAs[which(!(subsetnoNAs$Code %in% highlight_types)),],aes(y=binary),color='gray75', size=2)+
-    geom_point(data=subsetnoNAs[which(subsetnoNAs$Code %in% highlight_types),],aes(color=Code,y=binary), size=2) +
-    #geom_jitter(aes(y = binary), shape = 1, position = position_dodge(width=0.3))+
-    facet_grid(Treatment~.)+
-    scale_x_datetime(date_labels = "%b", breaks = "1 month") +
-    scale_y_discrete(labels=c("0" = "Closed", "1" = "Open"))+
-    labs(y="Gape", x="")+
-  theme_bw()+
-  #remove SN legend, take out grid lines but keep facet lines. Change font sizes
-  theme(legend.position = "none", axis.line=element_line(), panel.border = element_rect(color = "black",fill = NA,size = 1), panel.grid = element_blank(), axis.text = element_text(size = 20), axis.title = element_text(size = 30), strip.text = element_text(size = 20))
-
-ggsave(path=plots,"gapeallsites1020.png", width = 10, height = 6)
-
-
-
-```
-
-#graph binary plot per oyster
-```{r}
-#won't print out every oyster bc if first binary is NA then skips over entire thing. But prints many of them. Just to check for ones that were closed for extended periods of time to pull out of allgape graph for presentation.
-subcode = unique(my10MinuteSubset[,'Code'])
-
-for (oy in subcode){
-  subdata=my10MinuteSubset[my10MinuteSubset$Code == oy,]
-  if(!is.na(subdata$binary)) {
-    subdata %>%
-    dplyr::filter(!is.na(binary)) %>%
-    ggplot(aes(x = DateTime))+
-      geom_jitter(aes(y = binary), shape = 1, position = position_dodge(width=0.3))+
-      scale_y_discrete(labels=c("0" = "Closed", "1" = "Open"))+
-      theme_bw()+
-    #remove SN legend, take out grid lines but keep facet lines. Change font sizes
-    theme(legend.position = "none", axis.line=element_line(), panel.border = element_rect(color = "black",fill = NA,size = 1), panel.grid = element_blank(), axis.text = element_text(size = 20), axis.title = element_text(size = 30), strip.text = element_text(size = 20))
-    
-    ggsave(path=plots, file=paste0("gape",oy,".png"), width = 10, height = 6)
-  }
-}
-
-for (oy in subcode){
-  subdata=my10MinuteSubset[my10MinuteSubset$Code == oy,]
-  subdata %>%
-      ggplot(aes(x = DateTime))+
-        geom_jitter(aes(y = binary), shape = 1, position = position_dodge(width=0.3))+
-        scale_y_discrete(labels=c("0" = "Closed", "1" = "Open"))+
-        theme_bw()+
-      #remove SN legend, take out grid lines but keep facet lines. Change font sizes
-      theme(legend.position = "none", axis.line=element_line(), panel.border = element_rect(color = "black",fill = NA,size = 1), panel.grid = element_blank(), axis.text = element_text(size = 20), axis.title = element_text(size = 30), strip.text = element_text(size = 20))
-      
-    ggsave(path=plots, file=paste0("gape",oy,".png"), width = 10, height = 6)
-}
-
-```
-
-#calculate binary proportions
-```{r}
-#calculate number of non-NA values, find fraction that are 1s and fraction that are 0s to get %closed/open. 
-binarycounts=data.frame(tabyl(allgapemeta, Site, Treatment, binary))
-#rename Site column
-binarycounts$Site=binarycounts$X0.Site
-
-#generate with percents
-tabyl(allgapemeta, binary, Treatment) %>%
-  adorn_percentages("col") %>%
-  adorn_pct_formatting(digits = 1)
-
-#Remove extra columns
-binarycounts = subset(binarycounts, select = -c(X1.Site,X0.Site) )
-
-#change to long format. Choose columns to gather. 
-binary_long <- gather(binarycounts, Treatment, Count, X0.Eelgrass:X1.Oyster, factor_key=TRUE)
-
-#add 0s and 1s column and rename Treatment factors
-binary_long <-binary_long %>%
-  mutate(binary = case_when(
-    str_detect(Treatment, "X0") ~ "0",
-    str_detect(Treatment, "X1") ~ "1",)) %>% 
-    #str_detect(Treatment, "NA_") ~ "NA", #if include NAs then move )) %>% down
-    mutate(Treatment = case_when(
-    str_detect(Treatment, "Eelgrass") ~ "Eelgrass",
-    str_detect(Treatment, "Mud") ~ "Mud",
-    str_detect(Treatment, "Oyster") ~ "Oyster",)) 
-
-#make NAs true NAs
-#binary_long$binary[binary_long$binary=="NA"] <- NA
-
-#change order of binary in barplot
-binary_long$binary=factor(binary_long$binary, levels=c("1","0","NA"))
-#change order of sites
-binary_long$Site <- factor(binary_long$Site,levels = c("Westcliff", "PCH", "DeAnza", "Shellmaker"))
 #change order of treatment
-binary_long$Treatment <- factor(binary_long$Treatment,levels = c("Oyster", "Eelgrass", "Mud"))
+allgapemeta$Treatment <- factor(allgapemeta$Treatment,levels = c("Oyster", "Eelgrass", "Mud"))
+#make binary column categorical
+allgapemeta$binary=as.factor(allgapemeta$binary)
+#change order of sites
+allgapemeta$Site <- factor(allgapemeta$Site,levels = c("Westcliff", "PCH", "DeAnza", "Shellmaker"))
+#make code factor
+allgapemeta$Code<-as.factor(allgapemeta$Code)
 
-#calculate percent open/closed with NAs
-binary_long=as.data.frame(binary_long %>% 
-  group_by(Treatment) %>% 
-  mutate(percent=Count/sum(Count)))
-  
-#remove NAs from binary bc not included in graph. get percent separated by site and 0s and 1s.
-#calculate percents without NAs all sites
-binary_long_noNAallsites=binary_long %>% 
-  na.omit() %>% 
-  group_by(Treatment) %>%
-  mutate(percent = Count/sum(Count))
+remove(allgape)
 
-#No NAs De Anza only 
-binary_long_noNADA=binary_long %>% 
-  na.omit() %>% 
-  group_by(Site="De Anza") %>%
-  group_by(Treatment, .add=T) %>%
-  mutate(percent = Count/sum(Count))
-```
+#calculate length of data collection for each oyster
+allgapemetatime<-allgapemeta %>% 
+  group_by(Code) %>% 
+  summarize(Begin = min(DateTime, na.rm=TRUE),
+          End = max(DateTime, na.rm=TRUE)) %>% 
+  mutate(Diff=End-Begin)
 
-#graphing binary barplots
-```{r}
-#graph percent stacked. separted by site
-ggplot(binary_long_noNAallsites, aes(Site, Count, fill=binary))+
-  geom_bar(stat="identity", position="fill")+
-  theme_classic()+
-  scale_fill_discrete(labels=c('Open', 'Closed'), name="Valve gape")+
-  labs(y="Valve gape")
+#oysters <7 days:# S.M.1.1092 # P.M.5.1067 # W.O.3.1095 # P.M.4.1068 # D.E.3.1036 #P.M.3.1069
 
-#separated by treatment percent stacked
-ggplot(binary_long_noNAallsites, aes(Treatment, Count, fill=binary))+
-  geom_bar(stat="identity", position="fill")+
-  theme_classic()+
-  scale_fill_discrete(labels=c('Open', 'Closed'), name="Valve gape")+
-  labs(y="Valve gape")
+#remove from dataset:
+allgapemeta=allgapemeta%>%
+  dplyr::filter(
+    Code!="S.M.1.1092" & 
+    Code!="P.M.5.1067" & 
+    Code!="W.O.3.1095" & 
+    Code!="P.M.4.1068" & 
+    Code!="P.M.3.1069" & 
+    Code!="D.E.3.1036") 
 
-#separated by treatment stacked
-binary_longtest=as.data.frame(binary_long %>% 
-  group_by(Treatment, binary) %>% 
-  summarise(percentsum=sum(percent)))
-  #dplyr::filter(binary==c("0","1"))) 
-
-#graph so no black bars between groupings on stacked barplot
-binary_longtest %>% 
-  dplyr::filter(!is.na(binary)) %>% 
-ggplot(aes(Treatment, percentsum, fill=factor(binary, levels=c("1","0"))))+
-  geom_bar(stat="identity", position="stack", col="black")+
-  theme_classic()+
-  scale_fill_discrete(labels=c('Open', 'Closed'), name="Valve gape")+
-  labs(y="Proportion valve gape")+
-  ylim(0,1.0)
-
-binary_long %>% 
-  #dplyr::filter(!is.na(binary)) %>% 
-ggplot(aes(Treatment, Count, fill=binary))+
-  geom_bar(stat="identity", position="stack", col="black")+
-  theme_classic()+
-  scale_fill_discrete(labels=c('Open', 'Closed'), name="Valve gape")+
-  labs(y="Valve gape")+
-  ylim(0,1.0)
-
-#separated by treatment and site
-ggplot(binary_long_noNAallsites, aes(Treatment, Count, fill=binary))+
-  geom_bar(stat="identity", position="fill")+
-  theme_classic()+
-  scale_fill_discrete(labels=c('Open', 'Closed'), name="Valve gape")+
-  labs(y="Valve gape")+
-  facet_grid(~Site)
-
-#position=fill for percent stacked, position=dodge for side-by-side, position=stack for stacked. 
-#rle- function that tells how long value stays 1 or 0 in dataset. Get list of row index and how long it stays at value. 
-#in future- potentially filter out brief open/closed numbers. Run low pass filter over hall percentage values and remove brief closing periods. then can line up with tide height to show they're open when tide is high and closed when tide is low. Can try to correlated temp with gape values too. 
-
-#Use metadata to plot all sensors from oyster treatment (plot hall %, make time series plot). 3 panel plot- seagrass, mud, oyster treatment for De Anza, do for each site. Or all on same plot w/ diff colors for diff treatments.   
-#ideally also align with temp data/tide data. Can be in separate datasets just also needs to have POSIXxt to align timestamps. 
-#rtide package that generates time series of predicated tides. Use long beach (LA) harbor tide station. 
-
-#can have giant data file with all sensor data. 
-
-#will need to calculate average open for individuals over time. 
-```
-
-#ANOVA on valve gape vs treatment
-```{r}
-# valvetreatment.glm <- binary_long %>% 
-#   dplyr::filter(binary==0) %>% 
-#   #group_by(Treatment) %>% 
-#   #summarise(percentsum=sum(percent)) %>% 
-valvetreatment.glm <-  glm(formula = percentclosed ~ Treatment,
-                   data = binary_long,
-                   family = "binomial")
-
-
-```
-
-#plot field deaths by site or treatment
-```{r}
-yesdead<-metafile %>%
-  group_by(Site, Treatment, Fielddeath) %>% 
-  summarise(n=n()) %>% 
-  group_by(Fielddeath) %>% 
-  mutate(prop=n/sum(n)) %>% 
-  filter(Fielddeath %in% "Yes") 
-
-yesdeadtreatment<-yesdead %>% 
-  group_by(Treatment) %>% 
-  summarise(n=sum(n))
-
-yesdeadsite<-yesdead %>% 
-  group_by(Site) %>% 
-  summarise(n=sum(n))
-
-esquisse::esquisser()
-
-ggplot(yesdeadtreatment, aes(Treatment, n))+
-  geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
-  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
-  labs(y="Number of field deaths")
-ggsave(path=plots, "Field_deaths_treatment.png", width=6, height=6)
-
-ggplot(yesdeadsite, aes(Site, n))+
-  geom_bar(position="dodge", stat="summary", fun="mean")+
-  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
-  labs(y="Number of field deaths")
-ggsave(path=plots, "Field_deaths_site.png", width=6, height=6)
+write.csv(allgapemeta, paste0(NewportDir,"combinedgapemeta/", "allgapemeta.csv"), row.names=FALSE)
 
 ```
 
 
-```{r lukeScratch2, eval = FALSE}
-require(nlme)
-gapecalibfile = paste0(localpath,'Newport_SSINP/calibration/202303_calibrations_ostrea - Sheet1.csv')
 
-gapeCalibs = read.csv(gapecalibfile)
-# Reshape to long format
-gC = reshape(gapeCalibs, varying = list(c('Reading1','Reading2','Reading3')),
-				direction = 'long')
-# Remove the saturated sensors P.M.3.1069 and D.M.2.1052
-gC = gC[-(which(gC$Code == 'P.M.3.1069')), ]
-gC = gC[-(which(gC$Code == 'D.M.2.1052')), ]
-
-gC2 = groupedData(Reading1~Distance_mm|Code/time,data=gC)
-		
-
-```
-
-```{r lukeScratch1, eval = FALSE}
-# Messing around with the Hall data for growing oysters
-
-# gapedat should hold data for oyster W.O.5.1016
-oy="W.O.5.1016"
-gapedat=loadComboGape(oy)
-gapedat$DateTime = as.POSIXct(gapedat$DateTime, tz='UTC', format="%Y-%m-%d %H:%M:%S")
-
-#plot(gapedat$DateTime, gapedat$Hall, type = 'l')
-
-# It looks like the lower bound starts trending up quicker around Aug 1 2022
-d1 = as.POSIXct('2022-08-01 00:00')
-
-gape1 = gapedat[gapedat$DateTime >= d1, c('DateTime','Hall','hallpercent')]
-
-plot(gape1$DateTime, gape1$Hall, type = 'l')
-
-
-########################
-# Less fancy, just grab the min at the start and end of the series, and
-# fit a line to those two points to use as the correction
-min1 = which.min(gape1$Hall[1:1440])  # 1 day of data at 1min interval = 1440
-lastday = gape1[(nrow(gape1)-1440):nrow(gape1),] # subset last day of data
-min2 = which.min(lastday$Hall)
-bottomline = rbind(gape1[min1,], lastday[min2,])
-# Fit a straight line between the 2 minimum values
-mod1 = lm(Hall~DateTime,data = bottomline)
-# Generate a set of best fit points along the line, for each original time point
-newy = predict(mod1, newdata = gape1[c('DateTime','Hall')])
-# Subtract off the initial minimum Hall value so that newy2 represents the
-# offset below each point in the dataset
-newy2 = newy - bottomline$Hall[1]
-# Subtract off newy2 (offset) from each original Hall value. The offset will
-# be larger for later dates if the minimum data were trending upwards
-gape1$Hall2 = gape1$Hall - newy2
-# Show the results
-plot(gape1$DateTime, gape1$Hall, type = 'l') # Raw Hall data
-abline(mod1, col = 1) # the regression line
-lines(gape1$DateTime, gape1$Hall2, col = 4) # The adjusted Hall data
-abline(h = bottomline$Hall[1], col = 4)
-
-# Comments after playing with this: The simple algorithm does the thing I 
-# expect it to do, adjusting the rising Hall values down to a flat baseline. 
-# However, what you also see is that the maximum (presumed 100% opening) values
-# start to shrink through time after the downward correction. This happens 
-# because the actual range of Hall values is getting smaller as the animal 
-# grows and the baseline closed value shifts upwards. This is a result of the
-# curvelinear response of the hall effect sensor and the fact that when you
-# start with the magnet further from the Hall sensor in the closed position,
-# any opening of the shell results in a comparatively smaller change in the
-# Hall value, because you're starting in a less-sensitive portion of the Hall
-# sensor's range. Therefore it may be counterproductive to adjust these Hall
-# signals down to have a flat baseline, because it will later result in a
-# calculation of a smaller % opening if the total range is shrinking through 
-# time. Instead we want to keep the shifting baseline information intact,
-# and use it alongside sensor calibration data that come from different starting
-# values to adjust the estimated shell opening values into percentages. 
-
-
-
-```
 
 #add temp data on SN150
 ```{r}
@@ -2073,167 +2406,7 @@ growth %>%
   geom_line()
 ```
 
-#Extra code \`\`\`{#r extra tide code} library(rnoaa) library(tidyverse)
-library(ggplot2) library(suncalc) library(scales)
-
-july.tides \<- as.data.frame(coops_search(station_name = 9410660,
-begin_date = 20220701, end_date = 20210731, datum = "MLLW", product =
-"predictions"))
-
-march.tides \<- march.tides %\>% mutate(yyyy.mm.dd =
-as.Date(predictions.t, tz = "EST")) dates \<-
-unique(march.tides\$yyyy.mm.dd) sunlight.times \<- getSunlightTimes(date
-= seq.Date(as.Date("2020/3/1"), as.Date("2020/3/31"), by = 1), lat =
-39.5817, lon = -75.5883, tz = "EST")
-
-for (i in seq_along(dates)) { plot \<- ggplot(subset(march.tides,
-march.tides$yyyy.mm.dd==dates[i])) +  aes(x = predictions.t, y = predictions.v) +  geom_line(size = 1L, colour = "#0c4c8a") +  theme_bw() +  geom_vline(xintercept = sunlight.times$sunrise) +
-geom_vline(xintercept =
-sunlight.times$sunset) +  geom_vline(xintercept = sunlight.times$dawn,
-linetype="dotted") + geom_vline(xintercept = sunlight.times\$dusk,
-linetype="dotted") + ggtitle(dates[i]) + scale_x_datetime(labels =
-date_format("%b %d %H:%M", tz = "EST")) print(plot) } S.M.2.1087 =
-loadComboGape('S.M.2.1087') plotRawHallFunction(SN142)
-plot2HallFunction(SN142) remove(SN142)
-
-SN191 = loadComboGape('SN191') plot2HallFunction(SN191) remove(SN191)
-
-SN118 = loadComboGape('SN118') #badO plot2HallFunction(SN118)
-remove(SN118)
-
-SN187 = loadComboGape('SN187') plot2HallFunction(SN187) remove(SN187)
-
-SN152 = loadComboGape('SN152') \# The low hump at Jul 27 is shared with
-SN176 plot2HallFunction(SN152) remove(SN152)
-
-SN104 = loadComboGape('SN104') plot2HallFunction(SN104) remove(SN104)
-
-SN176 = loadComboGape('SN176') \# The low hump around Jul 27 is shared
-with SN152 plot2HallFunction(SN176) remove(SN176)
-
-SN174 = loadComboGape('SN174') \# Bad sensor? plot2HallFunction(SN174)
-remove(SN174)
-
-SN130 = loadComboGape('SN130') plot2HallFunction(SN130) remove(SN130)
-
-SN132 = loadComboGape('SN132') plot2HallFunction(SN132) remove(SN132)
-
-SN123 = loadComboGape('SN123') \# Clean up the large outliers near start
-and end plot2HallFunction(SN123) remove(SN123)
-
-SN150 = loadComboGape('SN150') plot2HallFunction(SN150) remove(SN150)
-
-SN138 = loadComboGape('SN138') plot2HallFunction(SN138) remove(SN138)
-
-SN164 = loadComboGape('SN164') \# Weird change in opening limit around
-Aug 6, like it could no longer open as far. SN164
-plot2HallFunction(SN164) remove(SN164)
-
-SN170 = loadComboGape('SN170') plot2HallFunction(SN170) remove(SN170)
-
-SN115 = loadComboGape('SN115') #bad plot2HallFunction(SN115)
-remove(SN115)
-
-SN143 = loadComboGape('SN143') \# Some kind of malfunction
-plot2HallFunction(SN143) remvove(SN143)
-
-SN191 = loadComboGape('SN191') plot2HallFunction(SN191) remove(SN191)
-
-SN125 = loadComboGape('SN125') \# Listed as dead, maybe why the upper
-limit shifts down in the last few days? Around July 26
-plot2HallFunction(SN125) remove(SN125)
-
-SN197 = loadComboGape('SN197') plot2HallFunction(SN197) remove(SN197)
-
-SN153 = loadComboGape('SN153') plot2HallFunction(SN153) remove(SN153)
-
-SN171 = loadComboGape('SN171') \# Strange dip around Aug 1-5
-plot2HallFunction(SN171) remove(SN171)
-
-SN112 = loadComboGape('SN112') \# I think this one is saturating the
-sensor when closed, magnet is too close, baseline closed value is
-possibly spurious plot2HallFunction(SN112) remove(SN112)
-
-SN193 = loadComboGape('SN193') \# Bad sensor plot2HallFunction(SN193)
-remove(SN193)
-
-SN118 = loadComboGape('SN118') \# Maybe died around Aug 9? Or did the
-magnet fall off? plot2HallFunction(SN118) remove(SN118)
-
-SN187 = loadComboGape('SN187') plot2HallFunction(SN187) remove(SN187)
-
-SN161 = loadComboGape('SN161') plot2HallFunction(SN161) remove(SN161)
-
-SN157 = loadComboGape('SN157') \# Bad sensor (magnetic field strength
-saturated probably) plot2HallFunction(SN157) remove(SN157)
-
-SN144 = loadComboGape('SN144') plot2HallFunction(SN144) remove(SN144)
-
-SN159 = loadComboGape('SN159') \# Different looking pattern than most
-others plot2HallFunction(SN159) remove(SN159)
-
-SN148 = loadComboGape('SN148') plot2HallFunction(SN148) remove(SN148)
-
-SN133 = loadComboGape('SN133') plot2HallFunction(SN133) remove(SN133)
-
-SN104 = loadComboGape('SN104') plot2HallFunction(SN104) remove(SN104)
-
-SN107 = loadComboGape('SN107') plot2HallFunction(SN107) remove(SN107)
-
-SN111 = loadComboGape('SN111') plot2HallFunction(SN111) remove(SN111)
-
-SN113 = loadComboGape('SN113') plot2HallFunction(SN113) remove(SN113)
-
-SN114 = loadComboGape('SN114') plot2HallFunction(SN114) remove(SN114)
-
-SN115 = loadComboGape('SN115') plot2HallFunction(SN115) remove(SN115)
-
-SN120 = loadComboGape('SN120') plot2HallFunction(SN120) remove(SN120)
-
-SN123 = loadComboGape('SN123') plot2HallFunction(SN123) remove(SN123)
-
-SN130 = loadComboGape('SN130') plot2HallFunction(SN130) remove(SN130)
-
-SN136 = loadComboGape('SN136') plot2HallFunction(SN136) remove(SN136)
-
-SN138 = loadComboGape('SN138') plot2HallFunction(SN138) remove(SN138)
-
-SN141 = loadComboGape('SN141') plot2HallFunction(SN141) remove(SN141)
-
-SN143 = loadComboGape('SN143') plot2HallFunction(SN143) remove(SN143)
-
-SN145 = loadComboGape('SN145') plot2HallFunction(SN145) remove(SN145)
-
-SN147 = loadComboGape('SN147') plot2HallFunction(SN147) remove(SN147)
-
-SN150 = loadComboGape('SN150') plot2HallFunction(SN150) remove(SN150)
-
-SN152 = loadComboGape('SN152') plot2HallFunction(SN152) remove(SN152)
-
-SN154 = loadComboGape('SN154') plot2HallFunction(SN154) remove(SN154)
-
-SN156 = loadComboGape('SN156') plot2HallFunction(SN156) remove(SN156)
-
-SN160 = loadComboGape('SN160') plot2HallFunction(SN160) remove(SN160)
-
-SN164 = loadComboGape('SN164') plot2HallFunction(SN164) remove(SN164)
-
-SN167 = loadComboGape('SN167') plot2HallFunction(SN167) remove(SN167)
-
-SN170 = loadComboGape('SN170') plot2HallFunction(SN170) remove(SN170)
-
-SN174 = loadComboGape('SN174') plot2HallFunction(SN174) remove(SN174)
-
-SN176 = loadComboGape('SN176') plot2HallFunction(SN176) remove(SN176)
-
-SN184 = loadComboGape('SN184') plot2HallFunction(SN184) remove(SN184)
-
-SN194 = loadComboGape('SN194') plot2HallFunction(SN194) remove(SN194)
-
-SN196 = loadComboGape('SN196') plot2HallFunction(SN196) remove(SN196)
-
-```         
-
+#Extra code
 ```{#r convertHalltobinary attempts}
 #make for loop that converts Hall values to 0s if between 0-40, and 1 if between 70-100 percentile. Use allgapemeta
 
@@ -2339,36 +2512,3 @@ back to the start and try the next number
 ```
 
 \`\`\`{#rextra convert hall to hallpercent } #gapeSN = 'SN21'\
-#gape.perc = gapedat
-
-#converts Hall column to 0-100 values so now on scale of 1-100
-#currentChannel = colnames(gapedat)[i] \# Locate the channel number from
-currentChannel name #chNumRegex = regexpr('[0-9]+', currentChannel) \#
-Extract the channel number #chNum = as.numeric(substr(currentChannel, \#
-start=chNumRegex, \#
-stop=(chNumRegex+attr(chNumRegex,'match.length')-1))) \# Generate the
-regression fit for the relationship between curvature parameter \# 'c'
-and the log-transform of 'b'. #chNum=1 #cRegress =
-cRegressEstimate(gapeSN, chNum,gapecalibfile) \# Convert the Hall effect
-values into estimated percent gape (0-100%) #gape.perc[,"hallpercent"] =
-calcPercentGapeNLME(gapedat[,4], cRegress, \# percentileLim =
-c(0.01,0.95))
-
-# The output data frame LPLgape.pc should now contain estimated percentage
-
-# gape values for each oyster at each time point.
-
-# Save a copy of the data frame that can be reopened for quicker execution
-
-# of this script instead of re-running the whole raw data processing
-
-#write.csv(gape.perc, \# file = paste0(gapeDir,SN107combogapefile), \#
-row.names=FALSE)
-
-# Create a decimated copy of the data frame (1 sample per minute) to make it
-
-# easier to handle
-
-#LPLgape.perc.dec = LPLgape.perc[seq(1,nrow(LPLgape.perc), by = 12),]
-#write.csv(LPLgape.perc.dec, \# file = paste0(gapeDir,LPL1minGapeFile)
-\# row.names=FALSE) \`\`\`

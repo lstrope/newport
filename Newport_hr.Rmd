@@ -26,6 +26,7 @@ library(signal)
 library(pracma)
 library(forecast)
 library(lubridate)
+library(ggplot2)
 ```
 
 #import files
@@ -115,13 +116,14 @@ oystercode = unique(metafile[,'Code'])
 ##################################################################
 serialnumber=unique(metafile[,1])
 oystercode = unique(metafile[,'Code']) #make list of all oyster codes 
-#oystercode=oystercode[-c(1:99)] #manually change which codes are combined 
+#oystercode=oystercode[-c(1:84)] #manually change which codes are combined 
 options(digits.secs = 3)
 
 
 pb = txtProgressBar(min = 0, max = length(oystercode), style = 3)
 counter = 0
 #oystercode = 'D.E.2.1028'  # test line, for SN150
+#oy="W.M.1.1026"
 for (oy in (oystercode) ){ 
 	counter = counter + 1
 	setTxtProgressBar(pb, counter)
@@ -134,6 +136,7 @@ for (oy in (oystercode) ){
 	loops = 1
 	
 	for (sn in (serialnumber)){
+	  if(exists('Heart')) {rm(Heart)} # clear old version of Heart
 		# In metadata file, figure out the start and end dates for this serial number
 		# when it was associated with this oyster code
 		startDate = metafile[which(metafile$SN == sn & 
@@ -162,11 +165,12 @@ for (oy in (oystercode) ){
 							sep = ',', na.strings=c("","NA")), silent=TRUE)
 			if (!exists('temp')){
 				next  # If the data frame temp wasn't created, skip the rest 
-						# of this iteration of the loop
+					    # of this iteration of the loop
 			}
 			
 			colnames(temp) = hdr
 			temp$DateTime  = as.POSIXct(temp$DateTime, tz = 'UTC', format="%Y-%m-%d %H:%M:%S")
+			
 			# The original data files only had a timestamp every 240 rows
 			# at the start and end of a 240-sample period. It might be useful
 			# to fill in the intervening time values
@@ -191,18 +195,44 @@ for (oy in (oystercode) ){
 				temp$DateTime[nextStart : (nextStart+240-1)] = tvals
 			}
 			
-			if (i == 1) {
-				Heart = temp
-			} else if (i > 1){
-				Heart = rbind(Heart,temp)
-			}
+    	if (!is.null(endDate) & !is.na(endDate)){
+    	  temp = temp[temp$DateTime>=startDate & temp$DateTime<=endDate, ]
+    	} else if (is.null(endDate) | is.na(endDate)){
+    	  # If no endDate was supplied, just trim data before start Date
+    	  temp = temp[temp$DateTime>=startDate, ]
+    	}
+    	
+    	if(nrow(temp)==0){
+		    next
+		  }
+			
+			
+			# if (i == 1) {
+			# 	Heart = temp
+			# } else if (i > 1){
+			# 	Heart = rbind(Heart,temp)
+			# }
+			
+# 		if(length(temp)!=0){
+		      if(!exists('Heart')){
+    			#if (i == 1) {
+    				Heart = temp
+    			} else if (exists('Heart')){
+    			#} else if (i > 1){
+    				Heart = rbind(Heart,temp)
+    			}
+# 		  } else if(length(temp)==0){
+# 		    next
+# 		  }
 		}
 		
-		if (loops == 1){
+		if (loops == 1 & exists('Heart')){
 			combineddat = Heart
 			loops = loops + 1
-		} else if (loops > 1) {
+		} else if (loops > 1 & exists('Heart')) {
 			combineddat = rbind(combineddat,Heart)
+		} else if (!exists('Heart')){
+		  next
 		}
 	} #end of serial number looping
 	
@@ -261,14 +291,6 @@ for (oy in (oystercode) ){
 	
 } # end of oystercode for loop 
 close(pb)
-
-```
-
-#remove bad data
-```{r}
-#excess 0s in W.M.1.1026
-
-
 
 ```
 
@@ -677,10 +699,9 @@ onKeybd <- function(key)
 # TODO wrap the code below in a control structure that will let you specify
 # an oyster code and then process that oyster's raw IR data
 oystercode = unique(metafile[,'Code']) #make list of all oyster codes 
-oystercode=oystercode[-c(1:84)] #manually change which codes are combined 
+oystercode=oystercode[-c(1:23)] #manually change which codes are combined 
 #skipped D.M.1.1102 bc error in resultlist$DPMagreeQuality.fft.fo argument is of length zero
-#skipped W.M.1.1026 zero-variance series 
-
+#oy="D.M.1.1102"
 for (oy in (oystercode) ){ 
   if(exists('rawheartpath')) { rm(rawheartpath) }
   options(digits.secs = 3) # used to preserve milliseconds values in time stamps
@@ -760,7 +781,7 @@ for (oy in (oystercode) ){
 
 mysensor = 'IR'
 
-oy = "D.E.2.1028"
+oy = "W.E.5.1002"
 
 # Open up the concatenated heart data for this oyster
 Heart = read.csv(paste0(comboheartpath,oy,'_comboheart.csv'))
@@ -1025,7 +1046,7 @@ if(userInput){
 	# Write the updated data back into the main data frame
 	Heartbpm = sensor
 	# Save the data frame to a csv file
-	write.csv(Heartbpm, file = paste0(heartoutputpath,oy,'_bpm_QA.csv'), 
+	write.csv(Heartbpm, file = paste0  (heartoutputpath,oy,'_bpm_QA.csv'), 
 			row.names=FALSE)
 } else {
   print("Updates not saved.")
@@ -1033,6 +1054,85 @@ if(userInput){
 
 ```
 
+
+
+#look for oysters with "good" heart rates super messy code, but it works ¯\_(ツ)_/¯ 
+```{r}
+#look at finalBPM. NA unless there was actually enough agreement and a strong enough signal. Otherwise look at the BPMagreeQuality.prac.fft column and see if values are close (like <4), since pracma and fft methods are usually the closest to agreeing even while the forecast method is showing 300+.
+df = data.frame()
+oystercode = unique(metafile[,'Code']) #make list of all oyster codes 
+for (oy in (oystercode)){
+  if(exists('bpmheartpath')) { rm(bpmheartpath) }
+  options(digits.secs = 3) # used to preserve milliseconds values in time stamps
+  bpmheartpath=file.path(paste0(heartoutputpath,oy,'_bpm.csv'))
+    if(!file.exists(bpmheartpath)) {
+  			next
+  		}
+  bpm = read.csv(bpmheartpath)
+  bpm=table(bpm$finalBPM, useNA = "ifany") #get frequency of BPM values for each oyster
+  bpmprop=prop.table(bpm) #calculate proportion of BPM values
+  bpmpropdata=data.frame(bpmprop)
+  output <- bpmpropdata$Freq[is.na(bpmpropdata$Var1)]#pull out Freq value for the NA row
+  
+  df=rbind(df, output)    
+  newoy <- rep(oy, ncol(df))              # Create new row
+  df[nrow(df) + 1, ] <- newoy              # Append new row
+  
+  write.csv(df,
+  		file = paste0(heartoutputpath,'bpmprop_v2.csv'),  
+  		row.names=FALSE)
+}
+
+df=read.csv(paste0(heartoutputpath,'bpmprop_v2.csv'))
+
+df2 <- data.frame(
+  "col1" = df[seq(1,length(df[,1]),2), "X0.797646211120452"], 
+  "col2" = df[seq(2,length(df[,1]),2), "X0.797646211120452"])
+
+write.csv(df2, 
+          file=paste0(heartoutputpath, 'NAprop_v2.csv'),
+          row.names=F)
+```
+
+
+#grab QAd HR data and put in one big csv
+```{r}
+#go through QAd HR files and pull out non NAs
+dfheart = data.frame()
+oystercode = unique(metafile[,'Code']) #make list of all oyster codes 
+#oystercode=oystercode[-c(1:23)] #manually change which codes are combined 
+oy="W.M.3.1021"
+for (oy in (oystercode) ){ 
+  if(exists('rawQApath')) { rm(rawQApath) }
+  options(digits.secs = 3) # used to preserve milliseconds values in time stamps
+  rawQApath=file.path(paste0(heartoutputpath,oy,'_bpm_QA.csv'))
+  if(!file.exists(rawQApath)) {
+			next
+		}
+  Heart = read.csv(rawQApath)
+  HeartnotNA= Heart[complete.cases(Heart[ , c('finalBPM')]), ] 
+  HeartnotNA$DateTime = as.POSIXct(HeartnotNA$DateTime, tz = 'UTC', format="%Y-%m-%d %H:%M:%S")
+ 
+  dfheart=rbind(dfheart, HeartnotNA) 
+    
+  write.csv(dfheart,
+  		file = paste0(heartoutputpath,'bpmQA.csv'),  
+  		row.names=FALSE)
+}
+```
+
+#graph QAd HRs
+```{r}
+bpmQA=read.csv(paste0(heartoutputpath,'bpmQA.csv'))
+bpmQA$DateTime = as.POSIXct(bpmQA$DateTime, tz = 'UTC', format="%Y-%m-%d %H:%M:%S")
+bpmQA$Code=bpmQA$OysterCode
+
+allhrmeta<-merge(bpmQA,metafile[, c("Site", "Treatment","Alive","Code")], by="Code")
+
+ggplot(allhrmeta, aes(DateTime, finalBPM, color=Site))+
+  geom_point(position="jitter")
+
+```
 
 
 
