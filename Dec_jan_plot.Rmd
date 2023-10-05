@@ -1,0 +1,416 @@
+---
+title: "Untitled"
+output: html_document
+date: "2023-09-26"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+```{r}
+
+dec_jan_hr=allhrgapemeta %>%
+  group_by(DateTime= floor_date(DateTime, unit = "day"),Treatment,Site,Code) %>% 
+  mutate(rangebpm=max(finalBPM, na.rm=TRUE)-min(finalBPM, na.rm=TRUE)) %>% 
+  mutate(avg_hr=mean(finalBPM),
+         avg_range=mean(rangebpm))%>% 
+  # mutate(Week = case_when(#new variable
+  #     DateTime >= "2023-01-01 00:00:00" & DateTime <= "2023-01-07 23:59:00" ~ "January",
+  #     DateTime >= "2023-01-08 00:00:00" & DateTime <= "2023-01-14 23:59:00" ~ "January2",
+  #     DateTime >= "2023-01-15 00:00:00" & DateTime <= "2023-01-21 23:59:00" ~ "January3",
+  #     DateTime >="2022-12-25 00:00:00" & DateTime <= "2022-12-31 23:59:00" ~ "December2",
+  #     DateTime >="2022-12-18 00:00:00" & DateTime <= "2022-12-24 23:59:00" ~ "December1",
+  #     TRUE ~ NA)) %>% 
+  mutate(Week = case_when(#new variable
+      DateTime >= "2022-10-30 00:00:00" & DateTime <= "2022-11-05 23:59:00" ~ "October",
+      DateTime >= "2022-11-06 00:00:00" & DateTime <= "2022-11-12 23:59:00" ~ "November1",
+      DateTime >= "2022-11-13 00:00:00" & DateTime <= "2022-11-19 23:59:00" ~ "November2",
+      TRUE ~ NA)) %>%
+  filter(!is.na(Week)) %>% #remove all other dates
+  mutate_if(is.character, as.factor) %>% 
+  mutate(#Week = fct_relevel(Week,c("December1","December2","January")),
+         Week = fct_relevel(Week,c("October","November1","November2")),
+         Treatment= fct_relevel(Treatment,c("Mud","Oyster", "Eelgrass"))) %>% 
+  dplyr::select(-c(X, hallpercent,finalBPM,rangebpm,binary,Temp.C)) %>% 
+  distinct() 
+  
+dec_jan_gape=allgapemeta %>% 
+  group_by(DateTime= floor_date(DateTime, unit = "day"),Treatment,Site,Code) %>% 
+  count(binary) %>% 
+  mutate(prop_open=n/sum(n)) %>% 
+  filter(binary=="1") %>% 
+  ungroup() %>% 
+  dplyr::select(-c(binary,n)) %>% 
+  distinct() 
+
+dec_jan=merge(dec_jan_hr,dec_jan_gape,by=c("Treatment", "Site", "Code","DateTime"))
+
+dec_jan_range=ggplot(dec_jan, aes(Week, avg_range,fill=Week))+
+  geom_boxplot()+
+  theme_classicmodify()+
+  labs(y="Average daily heart rate range (bpm)",tag = "D")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  scale_fill_manual(values=c("#f285f2","#01846D","#1E88E5"))+
+  #stat_n_text(size=5,y.pos=17) + 
+  scale_x_discrete(labels = c('October 30-November 5 2022', 'November 6-12 2022','November 13-19 2022'))+
+  theme(axis.title.x = element_blank(),legend.position="none")+
+  ylim(0,18)
+
+dec_jan_hr=ggplot(dec_jan, aes(Week, avg_hr,fill=Week))+
+  geom_boxplot()+
+  theme_classicmodify()+
+  labs(y="Average daily heart rate (bpm)",tag = "C")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  scale_fill_manual(values=c("#f285f2","#01846D","#1E88E5"))+
+  #stat_n_text(size=5,y.pos=17) + 
+  #scale_x_discrete(labels = c('December 18-24 2022', 'December 25-31 2022','January 1-7 2023'))+
+  theme(axis.title.x = element_blank(),legend.position="none")+
+  ylim(0,18)
+
+dec_jan_gapeplot=ggplot(dec_jan, aes(Week, prop_open,fill=Week))+
+  geom_boxplot()+
+  theme_classicmodify()+
+  labs(y="Daily proportion of open valves",tag = "B")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  scale_fill_manual(values=c("#f285f2","#01846D","#1E88E5"))+
+  stat_n_text(size=4,y.pos=1.5) + 
+  #scale_x_discrete(labels = c('December 18-24 2022', 'December 25-31 2022','January 1-7 2023'))+
+  theme(axis.title.x = element_blank(),legend.position="none")+
+  ylim(0,1.5)+
+  geom_signif(comparisons = list(c("October","November1"),c("October","November2"),c("November1","November2")),map_signif_level = TRUE,y_position = c(1.02,1.15,1.3),annotation = c("*", "ns","***"))
+  #stat_compare_means(comparisons = list(c("December1","December2"),c("December1","January"),c("December2","January")),label.y = c(1.02,1.13,1.28),aes(label = after_stat(p.signif)))
+
+dec_jan_rain=precipsumday %>% 
+    mutate(Week = case_when(#new variable
+      # DateTimeUTC >= "2023-01-01 00:00:00" & DateTimeUTC <= "2023-01-07 23:59:00" ~ "January",
+      # DateTimeUTC >= "2023-01-08 00:00:00" & DateTimeUTC <= "2023-01-14 23:59:00" ~ "January2",
+      # DateTimeUTC >= "2023-01-15 00:00:00" & DateTimeUTC <= "2023-01-21 23:59:00" ~ "January3",
+      # DateTime >="2022-12-25 00:00:00" & DateTime <= "2022-12-31 23:59:00" ~ "December2",
+      # DateTime >="2022-12-18 00:00:00" & DateTime <= "2022-12-24 23:59:00" ~ "December1",
+      DateTimeUTC >= "2022-10-30 00:00:00" & DateTimeUTC <= "2022-11-05 23:59:00" ~ "October",
+      DateTimeUTC >= "2022-11-06 00:00:00" & DateTimeUTC <= "2022-11-12 23:59:00" ~ "November1",
+      DateTimeUTC >= "2022-11-13 00:00:00" & DateTimeUTC <= "2022-11-19 23:59:00" ~ "November2",
+      TRUE ~ NA)) %>% 
+  filter(!is.na(Week)) %>% #remove all other dates
+  mutate(Week = fct_relevel(Week,c("October","November1","November2"))) %>% 
+  mutate_if(is.character, as.factor) %>% 
+  group_by(Week) %>% 
+  summarise(sumprecip=sum(precipday))
+
+dec_jan_rainplot=ggplot(dec_jan_rain, aes(Week, sumprecip,fill=Week))+
+  geom_col(col="black")+
+  theme_classicmodify()+
+  labs(y="Cumulative rainfall (mm)",tag = "A")+
+  scale_fill_manual(values=c("#f285f2","#01846D","#1E88E5"))+
+  #scale_x_discrete(labels = c('December 18-24 2022', 'December 25-31 2022','January 1-7 2023'))+
+  theme(axis.title.x = element_blank(),legend.position="none")
+  
+ggplot(precipculmweek, aes(DateTimeUTC, precipday))+
+  geom_col(col="black")
+
+ggarrange(dec_jan_rainplot+
+                   theme(
+                  axis.title.y=element_text(size = 11),
+                  axis.text.y=element_text(size = 9),
+                  axis.text.x = element_blank(),
+                  axis.ticks.x = element_blank(),
+                  axis.title.x = element_blank() ), 
+          dec_jan_gapeplot+
+                   theme(
+                  axis.title.y=element_text(size = 11),
+                  axis.text.y=element_text(size = 9),
+                  axis.text.x = element_blank(),
+                  axis.ticks.x = element_blank(),
+                  axis.title.x = element_blank() ), 
+          dec_jan_hr+
+                   theme(
+                  axis.title.y=element_text(size = 10),
+                  axis.text.y=element_text(size = 9),
+                  axis.text.x = element_blank(),
+                  axis.ticks.x = element_blank(),
+                  axis.title.x = element_blank() ), 
+           dec_jan_range+ 
+            theme(axis.title.y=element_text(size = 10),
+                  axis.text.y=element_text(size = 9),
+                  axis.text.x = element_text(size=11)),
+                  #axis.ticks.y = element_blank()), 
+          nrow=4, ncol=1)
+
+ggsave("oct_nov.png",path=plots, height=9, width=7)
+
+######################
+#gape and week
+
+#identify outliers
+dec_jan %>%
+  group_by(Week) %>%
+  identify_outliers(avg_range)
+#all have outliers
+
+#check normality
+dec_jan %>% shapiro_test(prop_open)
+dec_jan %>% shapiro_test(avg_hr)
+dec_jan %>% shapiro_test(avg_range)
+#none normal
+
+#Mann Whitney U Test
+wilcox.test(prop_open ~ Week, data=dec_jan, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+#pvalue=2.207e-09
+
+wilcox.test(avg_hr ~ Week, data=dec_jan, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+#pvalue=0.3666
+
+wilcox.test(avg_range ~ Week, data=dec_jan, na.rm=TRUE, paired=FALSE, exact=FALSE, conf.int=TRUE)
+#pvalue=0.4162
+
+########################
+#ANOVA
+
+
+dec_jan_stats=dec_jan %>%
+  group_by(Code,Week) %>%
+  summarise(avggape=mean(prop_open),
+         avghr=mean(avg_hr),
+         avgrange=mean(avg_range))
+
+#################
+###Gape
+# Compute the analysis of variance
+res.aov <- aov(avggape ~ Week, data=dec_jan_stats)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.685
+
+#test for homogeneity
+leveneTest(avggape ~ Week, data=dec_jan_stats)
+#equal variances p=0.4675
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals )
+#pvalue=0.006502 not normal
+
+kruskal.test(avggape ~ Week, data=dec_jan_stats)
+#pvalue=0.803
+
+dunnTest(avggape ~ Week, data=dec_jan_stats,method="bonferroni")
+
+###################
+##HR
+# Compute the analysis of variance
+res.aov <- aov(avghr ~ Week, data=dec_jan_stats)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.685
+
+#test for homogeneity
+leveneTest(avghr ~ Week, data=dec_jan_stats)
+#equal variances p=0.4675
+
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals )
+#pvalue=0.006502 not normal
+
+kruskal.test(avghr ~ Week, data=dec_jan_stats)
+#pvalue=0.803
+
+#######################
+##HR range
+# Compute the analysis of variance
+res.aov <- aov(avgrange ~ Week, data=dec_jan_stats)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.685
+
+#test for homogeneity
+leveneTest(avgrange ~ Week, data=dec_jan_stats)
+#equal variances p=0.4675
+
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals )
+#pvalue=0.006502 not normal
+
+kruskal.test(avgrange ~ Week, data=dec_jan_stats)
+
+mean(allhrgapemeta$finalBPM)
+
+min(allhrgapemeta$finalBPM)
+
+max(allhrgapemeta$finalBPM)
+
+ggplot(allhrgapemeta, aes(Code, finalBPM, col=Code))+
+  geom_boxplot()+
+  theme_classicmodify()+
+  theme(axis.text.x=element_text(size=8, angle=90),
+        legend.title = element_blank(),
+        legend.position = "none")+
+  stat_summary(fun=mean, geom="point", shape=23, size=2, color="black", fill="red")+
+  labs(y="Heart rate (bpm)", x="Oyster individual")
+
+ggsave("heartrate_code.png",path=plots, height=6, width=9)
+
+codehr=allhrgapemeta %>% 
+  group_by(Code) %>% 
+  summarise(minhr=min(finalBPM),
+            maxhr=max(finalBPM),
+            avghr=mean(finalBPM))
+
+
+```
+
+#presentation graphs
+
+#hr
+```{r}
+#seasonhrplot
+ggplot(seasonsavgsitehr,aes(Season,avgbpm,fill=Season))+
+  geom_boxplot()+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  theme_classicmodify()+
+  labs(y="Average daily heart rate (bpm)",tag = "A")+
+  scale_fill_manual(values=season_palette)+
+  theme(legend.position="none")+
+  stat_n_text(size=7,y.pos=15) + 
+  ylim(0,16)+
+  theme(axis.text=element_text(size=20),
+        axis.title=element_text(size=22),
+        legend.position="none")
+
+ggsave("season_avg_hr.png",path=plots, height=7, width=5)
+
+#sitehrplot
+ggboxplot(seasonsavgsitehr, x = "Site", y = "avgbpm",
+          color = "black", palette = sitePalette,fill="Site")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  labs(y="Average daily heart rate (bpm)",tag = "C")+
+  stat_n_text(size=7,y.pos=15) + 
+  ylim(0,16)+
+  theme(axis.text=element_text(size=20),
+        axis.title=element_text(size=22),
+        legend.position="none")
+
+ggsave("site_avg_hr.png",path=plots, height=7, width=5)
+
+#treathrplot
+ggboxplot(seasonsavgsitehr, x = "Treatment", y = "avgbpm",
+          color = "black", palette = c("chocolate4","#999999","#009E73"),fill="Treatment")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  labs(y="Average daily heart rate (bpm)",tag = "B")+
+  #compare_means(avgpercentopen ~ Site,  data = test)+
+  #stat_compare_means(method = "anova")+
+  #stat_compare_means(label = "p.signif", method = "t.test",
+  #                   ref.group = "Winter") +
+  #stat_compare_means(comparisons = my_comparisons_site,label.y = c(1, 1.05, 1.13),aes(label = after_stat(p.signif)))+
+  stat_n_text(size=7,y.pos=15) + 
+  ylim(0,16)+
+  theme(axis.text=element_text(size=20),
+        axis.title=element_text(size=22),
+        legend.position="none")
+ggsave("treat_avg_hr.png",path=plots, height=7, width=5)
+```
+
+#hr range
+```{r}
+#seasonrangeplot
+ggplot(seasonsavgsitehr,aes(Season,rangebpm,fill=Season))+
+  geom_boxplot()+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  theme_classicmodify()+
+  labs(y="Average daily heart rate range (bpm)",tag = "A")+
+  scale_fill_manual(values=season_palette)+
+  theme(legend.position="none")+
+  stat_n_text(size=7,y.pos=15) + 
+  ylim(0,16)+
+  theme(axis.text=element_text(size=20),
+        axis.title=element_text(size=22),
+        legend.position="none")
+
+ggsave("season_range_hr.png",path=plots, height=7, width=5)
+
+#siterangeplot
+ggboxplot(seasonsavgsitehr, x = "Site", y = "rangebpm",
+          color = "black", palette = sitePalette,fill="Site")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  labs(y="Average daily heart rate range (bpm)",tag = "C")+
+  stat_n_text(size=7,y.pos=15) + 
+  ylim(0,16)+
+  theme(axis.text=element_text(size=20),
+        axis.title=element_text(size=22),
+        legend.position="none")
+
+ggsave("site_range_hr.png",path=plots, height=7, width=5)
+
+#treatrangeplot
+ggboxplot(seasonsavgsitehr, x = "Treatment", y = "rangebpm",
+          color = "black", palette = c("chocolate4","#999999","#009E73"),fill="Treatment")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  labs(y="Average daily heart rate range (bpm)",tag = "B")+
+  #compare_means(avgpercentopen ~ Site,  data = test)+
+  #stat_compare_means(method = "anova")+
+  #stat_compare_means(label = "p.signif", method = "t.test",
+  #                   ref.group = "Winter") +
+  #stat_compare_means(comparisons = my_comparisons_treat2,label.y = c(11.2, 12.5, 14),aes(label = after_stat(p.signif)))+
+  geom_signif(comparisons = my_comparisons_treat2,map_signif_level = TRUE,y_position = c(11.2, 12.5, 14),annotation = c("*", "ns","ns"),aes(size=7))+
+  stat_n_text(size=7,y.pos=16) + 
+  ylim(0,16)+
+  theme(axis.text=element_text(size=20),
+        axis.title=element_text(size=22),
+        legend.position="none")
+
+ggsave("treat_range_hr.png",path=plots, height=7, width=5)
+```
+
+#gape
+```{r}
+#seasonplot
+ggboxplot(test, x = "Season", y = "avgpercentopen",
+          color = "black", palette = c("#009E73","#D55E00","#56B4E9","#CC79A7"),fill="Season")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  labs(y="Proportion of open valves",tag = "A")+
+  stat_compare_means(comparisons = my_comparisons,label.y = c(0.97, 1.06, 1.10),aes(label = after_stat(p.signif)))+
+  stat_n_text(size=7,y.pos=1.27) + 
+  ylim(0,1.3)+
+  theme(axis.text=element_text(size=20),
+        axis.title=element_text(size=22),
+        legend.position="none")
+
+ggsave("season_gape_plot.png",path=plots, height=7, width=5)
+
+#treatplot
+ggboxplot(test, x = "Treatment", y = "avgpercentopen",
+          color = "black", palette = c("chocolate4","#999999","#009E73"),fill="Treatment")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  labs(y="Proportion of open valves",tag = "B")+
+  stat_n_text(size=7,y.pos=1.27) + 
+  ylim(0,1.3)+
+  theme(axis.text=element_text(size=20),
+        axis.title=element_text(size=22),
+        legend.position="none")
+
+ggsave("treat_gape_plot.png",path=plots, height=7, width=5)
+
+#siteplot
+ggboxplot(test, x = "Site", y = "avgpercentopen",
+          color = "black", palette = sitePalette,fill="Site")+
+  stat_summary(fun=mean, geom="point",shape=23, size=4, color="black", fill="red")+
+  labs(y="Proportion of open valves",tag = "C")+
+  stat_n_text(size=7,y.pos=1.27) + 
+  ylim(0,1.3)+
+  theme(axis.text=element_text(size=20),
+        axis.title=element_text(size=22),
+        legend.position="none")
+
+ggsave("site_gape_plot.png",path=plots, height=7, width=5)
+```
+
