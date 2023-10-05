@@ -1,0 +1,560 @@
+---
+title: "Newport_growth"
+output: html_document
+date: '2022-08-03'
+editor_options: 
+  chunk_output_type: console
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+#libraries
+```{r loadLibraries, echo=FALSE, message=FALSE}
+library(tidyverse)
+library(scales)
+library(readr) 
+library(dplyr)
+library(Tides)
+library(janitor)
+library(zoo)
+library(esquisse)
+library(timetk)
+library(ggpattern)
+```
+
+#import files
+```{r fileLocations, echo=FALSE}
+# Directory path on Lauren's machine
+setwd("~/Documents/Oyster/Rcode")
+
+# Comment out one of the two localpath lines below depending on what computer you're on
+#localpath = '../../data/'  # Luke's path
+localpath = '../data/'  # Lauren's path
+
+NewportDir = paste0(localpath,'Newport_SSINP/')
+WestcliffEelgrassDir = paste0(localpath,'Newport_SSINP/Westcliff/Eelgrass/')
+
+# Collated calibration data from May 2019, used for Nov 2019 + 2020 oyster deployments
+gapecalibfile = paste0(localpath,'Newport_SSINP/calibration/201905_calibrations.csv')
+combogapefile= paste0(localpath,'Newport_SSINP/combinedgape/')
+
+#meta file with serial numbers
+metafilePath = paste0(localpath,'Newport_SSINP/metadata/')
+
+#tides
+tides=read.csv("../data/Newport_SSINP/environmental_data/LosAngeles_tides_202205-202307.csv")
+tides$DateTime=as.POSIXct(tides$TimeUTC, tz="UTC", format="%Y-%m-%d %H:%M")
+
+#precipitation
+precip=read.csv("../data/Newport_SSINP/environmental_data/Weather_data_KSNA_202205-202307.csv")
+precip$DateTimeUTC=as.POSIXct(precip$DateTimeUTC, tz="UTC", format="%Y-%m-%d %H:%M")
+
+#plots
+plots=paste0(localpath,'Newport_SSINP/plots/')
+
+#growth
+growth=read.csv(paste0(metafilePath, 'growth_measurements - Sheet1.csv'))
+growth$Date=as.POSIXct(growth$Date, tz="UTC", format="%Y-%m-%d")
+
+```
+
+#graphing settings
+```{r}
+sitePalette <- c("#E69F00", "#56B4E9", "#009E73", "#0072B2")
+sitePalette2 <- c("#E69F00", "#E69F00","#56B4E9","#56B4E9", "#009E73", "#009E73","#0072B2","#0072B2")
+
+# Function to scale secondary axis
+scale_function <- function(x, scale, shift){
+  return ((x)*scale - shift)
+}
+
+# Function to scale secondary variable values
+inv_scale_function <- function(x, scale, shift){
+  return ((x + shift)/scale)
+}
+```
+
+#calculate relative length and width
+```{r}
+#Relative length= length2-length0/length0= % increase from length0 (initial length)
+#Relative width= width2-width0/width0= % increase from width0 (initial width)
+
+#Only repeated measurements included, remove all single growth measurements
+growthrepeats=subset(growth,duplicated(Code) | duplicated(Code, fromLast=TRUE))
+
+relativegrowthrate=growthrepeats %>% 
+  group_by(Code) %>% 
+  arrange(Date) %>%
+  mutate(Date_diff = Date - lag(Date, default=first(Date)),
+         Length_diff = Length_mm - lag(Length_mm, default = first(Length_mm)), #diff in length from previous measurement
+         Width_diff = Width_mm - lag(Width_mm, default = first(Width_mm))) %>% #diff in width from previous measurement
+         #Length_rate=Length_diff/lag(Length_mm, default=first(Length_mm)), #diff/previous measurement
+         #Width_rate=Width_diff/lag(Width_mm, default=first(Width_mm)))%>% #diff/previous measurement
+  select(-c(SN, Length_mm, Width_mm, Notes, Alive))
+
+#create diff date column by week
+relativegrowthrate$Date_diff_week=as.double(relativegrowthrate$Date_diff,units="weeks")
+relativegrowthrate$Date_diff_day=as.double(relativegrowthrate$Date_diff,units="days")
+
+avgrelgrowthweek=relativegrowthrate %>% 
+  filter(Date_diff>2000000) %>%  
+  filter(Width_diff>-10) %>% #take out measurements that were errors
+  filter(Width_diff<10) %>% 
+  filter(Length_diff>-10) %>% 
+  filter(Length_diff<10) %>%
+  group_by(Code) %>% 
+  mutate(Date_diff_month=Date_diff_week/4.345) %>% #make new column if time diffs by month
+  mutate(lengthdate=Length_diff/Date_diff_day,#rate/difference in time between measurements
+         widthdate=Width_diff/Date_diff_day) %>% #rate/difference in time between measurement
+         #mean_widthdate=mean(widthdate,na.rm=T),#average of growth rate by oyster
+         #mean_lengthdate=mean(lengthdate,na.rm=T)) %>% #average of growth rate by oyster
+  ungroup() %>% 
+  mutate(year_month = floor_date(Date, "month")) %>% 
+    mutate(Treatment= fct_relevel(Treatment,c("Mud","Oyster", "Eelgrass")))
+
+#avgrelgrowthweek$year_month=as.factor(avgrelgrowthweek$year_month)
+
+```
+
+#graphing
+```{r}
+lengthplot=ggplot(avgrelgrowthweek, aes(year_month, lengthdate, group=year_month))+
+  geom_boxplot()+
+  theme_classic()+
+  stat_summary(fun=mean, geom="point", shape=23, size=5, color="black", fill="red")+
+  labs(y="Length growth rate (mm/day)",x="Date",tag = "A")+
+  theme(axis.text = element_text(size = 15), axis.title = element_text(size = 25),legend.title = element_text(size=25), legend.text = element_text(size=15))+
+  geom_hline(aes(yintercept=0), col="black",size=1,alpha=0.4)+
+  guides(fill = "none")+
+  ylim(-0.3,0.35)+
+  stat_n_text(size=5,y.pos=0.35) +
+  scale_x_datetime(breaks = seq(as.POSIXct("2022-12-01"), as.POSIXct("2023-07-01"), by="2 month"), date_labels = "%b %Y")
+
+lengthplot=ggplot(avgrelgrowthweek, aes(year_month, lengthdate, group=year_month))+
+  geom_boxplot()+
+  theme_classic()+
+  stat_summary(fun=mean, geom="point", shape=23, size=5, color="black", fill="red")+
+  labs(y="Difference in length (mm/day)",x="Date",tag = "A")+
+  theme(axis.text = element_text(size = 15), axis.title = element_text(size = 25),legend.title = element_text(size=25), legend.text = element_text(size=15))+
+  geom_hline(aes(yintercept=0), col="black",size=1,alpha=0.4)+
+  guides(fill = "none")+
+   ylim(-20,20)+
+   stat_n_text(size=5,y.pos=20) +
+  scale_x_datetime(breaks = seq(as.POSIXct("2022-12-01"), as.POSIXct("2023-07-01"), by="2 month"), date_labels = "%b %Y")
+
+ggsave(path=plots, "length_month.png",width=8, height=6)
+
+# Compute the analysis of variance
+res.aov <- aov(lengthdate ~ year_month, data=avgrelgrowthweek)
+# Summary of the analysis
+summary(res.aov)
+# #pvalue=<2e-16
+# 
+# #tukey pairwise
+# TukeyHSD(res.aov)
+# #All comparisons sig except spring/fall
+# 
+# #or pairwise
+# pairwise.t.test(tempdayseason$temp_day_mean,tempdayseason$Season,
+#                  p.adjust.method = "BH")
+# #All comparisons not sig
+
+#test for homogeneity
+leveneTest(lengthdate ~ year_month, data=avgrelgrowthweek)
+#not equal variances p=0.8861
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=5.611e-07 so not normal
+
+kruskal.test(lengthdate ~ year_month, data=avgrelgrowthweek)
+#pvalue=0.8687
+
+widthplot=ggplot(avgrelgrowthweek, aes(year_month, lengthdate,group=year_month))+
+  geom_boxplot()+
+  geom_hline(aes(yintercept=0), col="black",size=1,alpha=0.4)+
+  ylim(-20,20)+
+  theme_classic()+
+  #stat_n_text(size=5,y.pos=1.3) +
+  stat_summary(fun=mean, geom="point", shape=23, size=5, color="black", fill="red")+
+  labs(y="Difference in width (mm/week)",x="Date",tag = "B")+
+  theme(axis.text = element_text(size = 15), axis.title = element_text(size = 25),legend.title = element_text(size=25), legend.text = element_text(size=15))+
+  guides(fill = "none")+
+      scale_x_datetime(breaks = seq(as.POSIXct("2022-12-01"), as.POSIXct("2023-07-01"), by="2 month"), date_labels = "%b %Y")
+
+widthplot=ggplot(avgrelgrowthweek, aes(year_month, widthdate,group=year_month))+
+  geom_boxplot()+
+  geom_hline(aes(yintercept=0), col="black",size=1,alpha=0.4)+
+  ylim(-0.3,0.35)+
+  theme_classic()+
+  #stat_n_text(size=5,y.pos=1.3) +
+  stat_summary(fun=mean, geom="point", shape=23, size=5, color="black", fill="red")+
+  labs(y="Width growth rate (mm/day)",x="Date",tag = "B")+
+  theme(axis.text = element_text(size = 15), axis.title = element_text(size = 25),legend.title = element_text(size=25), legend.text = element_text(size=15))+
+  guides(fill = "none")+
+      scale_x_datetime(breaks = seq(as.POSIXct("2022-12-01"), as.POSIXct("2023-07-01"), by="2 month"), date_labels = "%b %Y")
+
+ggsave(path=plots, "width_month.png",width=8, height=6)
+
+# Compute the analysis of variance
+res.aov <- aov(widthdate ~ year_month, data=avgrelgrowthweek)
+# Summary of the analysis
+summary(res.aov)
+# #pvalue=<2e-16
+
+#test for homogeneity
+leveneTest(widthdate ~ year_month, data=avgrelgrowthweek)
+#equal variances p=0.8861
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=5.611e-07 so not normal
+
+kruskal.test(widthdate ~ year_month, data=avgrelgrowthweek)
+#pvalue=0.9936
+
+ggarrange( 
+           lengthplot+ 
+            theme(axis.text.x = element_blank(),
+                  axis.ticks.x = element_blank(),
+                  axis.title.x = element_blank(),
+                  axis.text=element_text(size=13),
+                  axis.title.y=element_text(size=13.5)),
+           widthplot+
+             theme(#axis.text.x = element_blank(),
+                  #axis.ticks.x = element_blank(),
+                  axis.title.y = element_text(size=13.5),
+                  axis.text=element_text(size=13),
+                  axis.title.x=element_text(size=15)), nrow=2, ncol=1)
+
+ggsave(path=plots, "width_growth_month.png",width=8, height=6)
+
+
+```
+
+#site and treatment
+```{r}
+lengthsite=ggplot(avgrelgrowthweek, aes(Site, lengthdate))+
+  geom_boxplot(col="black", fill=sitePalette)+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  theme_classic()+
+    ylim(-0.3,0.35)+
+  geom_hline(aes(yintercept=0), col="black",size=1,alpha=0.4)+
+  stat_n_text(size=5,y.pos=0.35) +
+  labs(y="Length growth rate (mm/day)",tag = "A")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 25),legend.title = element_text(size=25), legend.text = element_text(size=15))+
+  guides(fill = "none")
+
+ggsave(path=plots, "relative_length_sites.png",width=6, height=6)
+
+widthsite=ggplot(avgrelgrowthweek, aes(Site, widthdate))+
+  geom_boxplot(col="black", fill=sitePalette)+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  theme_classic()+
+  geom_hline(aes(yintercept=0), col="black",size=1,alpha=0.4)+
+  ylim(-0.3,0.35)+
+  labs(y="Width growth rate (mm/day)",tag = "C")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 25),legend.title = element_text(size=25), legend.text = element_text(size=15))+
+  guides(fill = "none")
+
+ggsave(path=plots, "relative_length_sites.png",width=6, height=6)
+
+widthtreat=
+  ggplot(avgrelgrowthweek, aes(Treatment, widthdate))+
+  geom_boxplot(col="black", fill=treatment_palette)+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  ylim(-0.3,0.35)+
+  geom_hline(aes(yintercept=0), col="black",size=1,alpha=0.4)+
+  theme_classic()+
+  labs(y="Width growth rate (mm/day)",tag = "D")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 25),legend.title = element_text(size=25), legend.text = element_text(size=15))+
+  guides(fill = "none")
+
+ggsave(path=plots, "relative_width_treatment.png",width=6, height=6)
+
+lengthtreat=ggplot(avgrelgrowthweek, aes(Treatment, lengthdate))+
+  geom_boxplot(col="black", fill=treatment_palette)+
+  geom_hline(aes(yintercept=0), col="black",size=1,alpha=0.4)+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  ylim(-0.3,0.35)+
+  theme_classic()+
+  stat_n_text(size=5,y.pos=0.35) +
+  labs(y="Length growth rate (mm/day)",tag = "B")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 25),legend.title = element_text(size=25), legend.text = element_text(size=15))+
+  guides(fill = "none")
+
+ggsave(path=plots, "relative_width_treatment.png",width=6, height=6)
+
+ggarrange(lengthsite+ 
+            theme(axis.text.x = element_blank(),
+                  axis.ticks.x = element_blank(),
+                  axis.title.x = element_blank(),
+                  axis.text=element_text(size=13),
+                  axis.title.y=element_text(size=13.5)),
+          lengthtreat+ 
+            theme(axis.text.x = element_blank(),
+                  axis.ticks.x = element_blank(),
+                  axis.title.x = element_blank(),
+                  axis.text.y = element_blank(),
+                  axis.ticks.y = element_blank(),
+                  axis.title.y = element_blank(),
+                  #axis.text=element_text(size=12),
+                  axis.title=element_text(size=15)),
+           widthsite+
+             theme(#axis.text.x = element_blank(),
+                  #axis.ticks.x = element_blank(),
+                  axis.title.y = element_text(size=13.5),
+                  axis.text=element_text(size=12),
+                  axis.title.x=element_text(size=15)),
+
+           widthtreat+
+             theme(axis.text.y = element_blank(),
+                  axis.ticks.y = element_blank(),
+                  axis.title.y = element_blank(),
+                  axis.text=element_text(size=12),
+                  axis.title=element_text(size=15)), nrow=2, ncol=2)
+
+ggsave(path=plots, "growth_site_treat.png",width=8, height=6)
+
+#by date
+ggplot(avgrelgrowthweek, aes(year_month, mean_widthdate,group=year_month))+
+  geom_boxplot()+
+  stat_summary(fun=mean, geom="point", shape=23, size=5, color="black", fill="red")+
+  ylim(-2,1.5)+
+  #geom_boxplot(col="black", fill=treatment_palette)+
+  theme_classic()+
+  labs(y="Average width growth (mm)")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 25),legend.title = element_text(size=25), legend.text = element_text(size=15))+
+  guides(fill = "none")
+
+ggsave(path=plots, "relative_width_date.png",width=6, height=6)
+
+avggrowthstats=avgrelgrowthweek %>% 
+  group_by(Code,Treatment,Site) %>% 
+  summarise(mean_lengthdate=mean(lengthdate),
+            mean_widthdate=mean(widthdate)) %>% 
+  distinct()
+
+max(avggrowthstats$mean_lengthdate)
+min(avggrowthstats$mean_lengthdate)
+max(avggrowthstats$mean_widthdate)
+min(avggrowthstats$mean_widthdate)
+
+std.error <- function(x) sd(x)/sqrt(length(x))
+mean(avggrowthstats$mean_lengthdate)
+std.error(avggrowthstats$mean_lengthdate)
+
+mean(avggrowthstats$mean_widthdate)
+std.error(avggrowthstats$mean_widthdate)
+
+#test growth vs treatment and site
+####################################
+###Width and treatment
+# Compute the analysis of variance
+res.aov <- aov(mean_lengthdate ~ Treatment, data=avggrowthstats)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=<2e-16
+
+#test for homogeneity
+leveneTest(mean_lengthdate ~ Treatment, data=avggrowthstats)
+#not equal variances p=0.8861
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=5.611e-07 so not normal
+
+kruskal.test(mean_lengthdate ~ Treatment, data=avggrowthstats)
+#pvalue=0.001874
+
+# #new set without month
+# avggrowthstats=avgrelgrowthweek %>% 
+#   select(c("Site","Treatment","mean_widthdate","mean_lengthdate")) %>% 
+#   distinct()
+
+################################
+###Width and treatment
+# Compute the analysis of variance
+res.aov <- aov(mean_widthdate ~ Treatment, data=avggrowthstats)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=<2e-16
+
+#test for homogeneity
+leveneTest(mean_widthdate ~ Treatment, data=avggrowthstats)
+#not equal variances p=0.8861
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=5.611e-07 so not normal
+
+kruskal.test(mean_widthdate ~ Treatment, data=avggrowthstats)
+#pvalue=0.001874
+
+#####################
+###### Width and site
+# Compute the analysis of variance
+res.aov <- aov(mean_widthdate ~ Site, data=avggrowthstats)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=<2e-16
+
+#test for homogeneity
+leveneTest(mean_widthdate ~ Site, data=avggrowthstats)
+#not equal variances p=0.8861
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=5.611e-07 so not normal
+
+kruskal.test(mean_widthdate ~ Site, data=avggrowthstats)
+#pvalue=0.001874
+
+######################
+### Length and site
+# Compute the analysis of variance
+res.aov <- aov(mean_lengthdate ~ Site, data=avggrowthstats)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=<2e-16
+
+#test for homogeneity
+leveneTest(mean_lengthdate ~ Site, data=avggrowthstats)
+#not equal variances p=0.8861
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=5.611e-07 so not normal
+
+kruskal.test(mean_lengthdate ~ Site, data=avggrowthstats)
+#pvalue=0.001874
+```
+
+#find averages by month, site, treatment and save to csv
+```{r}
+avggrowthmonth=avgrelgrowthweek %>% 
+  group_by(year_month) %>% 
+  summarise(avglength=mean(mean_lengthdate),
+         avgwidth=mean(mean_widthdate))
+
+write.csv(avggrowthmonth, paste0(metafilePath,"/average_growth_month.csv"), row.names=FALSE)
+
+avggrowthtreat=avgrelgrowthweek %>% 
+  group_by(Treatment) %>% 
+  summarise(avglength=mean(mean_lengthdate),
+         avgwidth=mean(mean_widthdate))
+
+write.csv(avggrowthtreat, paste0(metafilePath,"/average_growth_treat.csv"), row.names=FALSE)
+
+avggrowthsite=avgrelgrowthweek %>% 
+  group_by(Site) %>% 
+  summarise(avglength=mean(mean_lengthdate),
+         avgwidth=mean(mean_widthdate))
+
+write.csv(avggrowthsite, paste0(metafilePath,"/average_growth_site.csv"), row.names=FALSE)
+```
+
+#see if averages differ from 0
+```{r}
+#not doing what i want it to yet. Want ntreats to count the number of oysters in each site/treatment. Then only give the mean length and width separated by site and treatment
+growthstats=avgrelgrowthweek %>% 
+  select(-c("Date","Date_diff","Length_diff","Width_diff","lengthdate","widthdate","year_month","Date_diff_week")) %>% 
+  group_by(Code) %>% 
+  mutate(avgwidth=mean(mean_widthdate),
+         avglength=mean(mean_lengthdate)) %>% 
+  distinct() %>% 
+  ungroup() %>% 
+  select(-"Code") %>% 
+  group_by(Treatment,Site) %>% 
+  mutate(ntreats = n()) %>% 
+  ungroup() %>% 
+  distinct()
+ 
+
+#normal 
+shapiro.test(growthstats$mean_widthdate)
+qqPlot(growthstats$mean_widthdate)
+#0.06 normal
+
+#not normal
+shapiro.test(growthstats$mean_lengthdate)
+qqPlot(growthstats$mean_lengthdate)
+
+#kruskal wallice test test
+kruskal.test(mean_lengthdate ~ Site, data=growthstats)
+#p=0.9011, Length does not significantly diff by site 
+kruskal.test(mean_widthdate ~ Site, data=growthstats)
+#p=0.8216, width doesn't significantly diff by site
+
+kruskal.test(mean_lengthdate ~ Treatment, data=growthstats)
+#p=0.9749, Length does not significantly diff by treat
+kruskal.test(mean_widthdate ~ Treatment, data=growthstats)
+#p=0.3552, width does not significantly diff by treat
+
+ggplot(growthstats, aes(Treatment, mean_widthdate))+
+  geom_boxplot(col="black", fill=treatment_palette)+
+  stat_summary(fun=mean, geom="point", shape=18, size=5, color="red", fill="red")+
+  theme_classic()+
+  labs(y="Relative width (mm)")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 25),legend.title = element_text(size=25), legend.text = element_text(size=15))+
+  guides(fill = "none")
+
+kruskal.test(mean_lengthdate ~ year_month, data=growthstats)
+#p=0.6559, Length does not significantly diff by month
+kruskal.test(mean_widthdate ~ year_month, data=growthstats)
+#p=0.9936, width does not significantly diff by month
+```
+
+#compare growth rates with percent open gape 
+```{r}
+growthgape=merge(relativegrowthrate, gapebinarypercentcode, by="Code")
+
+ggplot(growthgape, aes(percentopen, Width_diff))+
+  geom_line()+
+  labs(x="Percent open (%)", y="Width growth (mm)")+
+  theme_classic()+
+  geom_smooth(col="red")
+
+ggsave(path=plots, "widthgrowth_gapeopen.png", width=6, height=6)
+```
+
