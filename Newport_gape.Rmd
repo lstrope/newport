@@ -1,5 +1,5 @@
 ---
-title: "Newport_SSINP"
+title: "Newport_gape"
 output: html_document
 date: '2022-08-03'
 editor_options: 
@@ -24,6 +24,10 @@ library(zoo)
 library(esquisse)
 library(timetk)
 library(ggpattern)
+library(ggpubr)
+library(EnvStats)
+library(FSA) #dunntest
+library(rstatix)
 ```
 
 #import files
@@ -37,6 +41,7 @@ localpath = '../data/'  # Lauren's path
 
 NewportDir = paste0(localpath,'Newport_SSINP/')
 WestcliffEelgrassDir = paste0(localpath,'Newport_SSINP/Westcliff/Eelgrass/')
+gapeplot=paste0(localpath, 'Newport_SSINP/gapeplotdata/')
 
 # Collated calibration data from May 2019, used for Nov 2019 + 2020 oyster deployments
 gapecalibfile = paste0(localpath,'Newport_SSINP/calibration/201905_calibrations.csv')
@@ -56,12 +61,17 @@ precip$DateTimeUTC=as.POSIXct(precip$DateTimeUTC, tz="UTC", format="%Y-%m-%d %H:
 #plots
 plots=paste0(localpath,'Newport_SSINP/plots/')
 
+
+
 ```
 
 #graphing settings
 ```{r}
 sitePalette <- c("#E69F00", "#56B4E9", "#009E73", "#0072B2")
 sitePalette2 <- c("#E69F00", "#E69F00","#56B4E9","#56B4E9", "#009E73", "#009E73","#0072B2","#0072B2")
+treatment2_palette = c("#C9C9C9", "#999999", "#70DCBE", "#009E73", "#DC9867", "chocolate4")
+treatment_palette=c("chocolate4","#999999", "#009E73")
+season_palette=c("#009E73","#D55E00","#56B4E9","#CC79A7")
 
 # Function to scale secondary axis
 scale_function <- function(x, scale, shift){
@@ -72,6 +82,16 @@ scale_function <- function(x, scale, shift){
 inv_scale_function <- function(x, scale, shift){
   return ((x + shift)/scale)
 }
+
+my_comparisons_season2=list(c("Winter","Summer"),c("Fall","Winter"),
+  c("Winter","Spring"))
+my_comparisons_season=list(c("Fall","Summer"),c(
+  "Winter","Summer"),c("Spring","Summer"),c("Fall","Winter"),c("Fall","Spring"),c("Winter","Spring"))
+my_comparisons_treat2=list(c("Oyster","Eelgrass"),c("Oyster","Mud"),c(
+  "Eelgrass","Mud"))
+my_comparisons=list(c("Winter","Summer"),c("Fall","Winter"),c("Winter","Spring"))
+my_comparisons_site=list(c("DeAnza","PCH"),c("DeAnza","Shellmaker"),c(
+  "DeAnza","Westcliff"),c("PCH","Shellmaker"),c("PCH","Westcliff"),c("Shellmaker","Westcliff"))
 ```
 
 
@@ -968,6 +988,16 @@ plotRawHallFunction = function(gape){
 
 ```
 
+#loessfunc function
+```{r}
+loessFunc = function(x,y, col = 1, lwd = 2, pch = '.', cex = 1, span = 0.75, pchcex = 1){
+	#points(x, y, col = col, pch = pch, cex = pchcex)
+	lo = loess(y~as.numeric(x), na.action = 'na.omit', span = span)
+	predy = predict(lo, newdata = as.numeric(x))
+	lines(x, predy, col = col, lwd = lwd)
+}
+```
+
 #import metadata
 ```{r}
 #import csv metadata_with edits. 
@@ -985,6 +1015,11 @@ growth=read.csv(paste0(metafilePath, "growth_measurements - Sheet1.csv"))
 allgapemeta=read.csv(paste0(NewportDir,"combinedgapemeta/", "allgapemeta.csv"))
 #change datetime to posixct
 allgapemeta$DateTime=as.POSIXct(allgapemeta$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+
+#import allhrgapemeta
+allhrgapemeta=read.csv(paste0(metafilePath,"/allhrgapemeta.csv"))
+allhrgapemeta$DateTime=as.POSIXct(allhrgapemeta$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+
 ```
 
 #calculate proportion open/closed for each code, then average them per treatment/site
@@ -995,16 +1030,17 @@ gapebinarypercent <- allgapemeta %>%
   drop_na(binary) %>% 
   group_by(Treatment,Site) %>% 
   count(binary) %>% 
-  mutate(percentopen=n/sum(n)) 
-
-gapebinaryopen=gapebinarypercent[gapebinarypercent$binary == '1', ]
+  mutate(percentopen=n/sum(n)) %>% 
+  filter(binary=="1")
 
 #calculate average open/closed per code
 gapebinarypercentcode <- allgapemeta %>%
   group_by(Code) %>% #do calculations by oyster code
   drop_na(binary) %>% 
   count(binary) %>% 
-  mutate(percentopen=n/sum(n))
+  mutate(percentopen=n/sum(n)) %>% 
+  filter(binary=="1") %>% 
+  select(-binary)
 
 #weighted proportion within site, calculate total open and total observations for treatments within sites, same numbers as gapebinarypercent
 weightedgapebinary<-gapebinarypercent %>%
@@ -1015,7 +1051,7 @@ weightedgapebinary<-gapebinarypercent %>%
   select(-c(percentopen,binary)) %>% 
   mutate(prop_open=totalopen/total_obs)
 
-ggplot(weightedgapebinary, aes(Treatment, prop_open, fill = Treatment)) + # ggplot2 barplot with error bars
+ggplot(gapebinarypercent, aes(Treatment, percentopen, fill = Treatment)) + # ggplot2 barplot with error bars
   geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
   stat_summary(geom = "errorbar", fun.data = mean_se, position = "dodge",width = 0.2, size = 0.75)+
   ylim(0,1)+
@@ -1025,9 +1061,9 @@ ggplot(weightedgapebinary, aes(Treatment, prop_open, fill = Treatment)) + # ggpl
 
 ggsave(path=plots, "proportion_open_treatment_weighted.png", width=7, height=6)
 
-ggplot(weightedgapebinary, aes(Site, prop_open))+
+ggplot(gapebinarypercent, aes(Site, percentopen))+
   #geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
-  geom_bar(position="dodge", stat="summary", fun="mean", fill=cbPalette)+
+  geom_bar(position="dodge", stat="summary", fun="mean", fill=sitePalette,col="black")+
   #check that it's standard error
   #geom_errorbar( aes(x=name, ymin=value-sd, ymax=value+sd), width=0.4, colour="orange", alpha=0.9, size=1.3)
   stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
@@ -1040,10 +1076,967 @@ ggsave(path=plots, "proportion_open_site.png", width=7, height=6)
 
 ```
 
+#find water temps
+```{r}
+#combine tide height and temp.c 
+hightidetemp=merge(allhrgapemeta,tides, by="DateTime")
+hightidetemp$DateTime=as.POSIXct(hightidetemp$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+
+hightidetemp=hightidetemp %>% 
+  slice(-c(1622, 1636, 1722, 1750, 1764, 1772, 1776, 1788))%>% #remove outliers 
+  subset(TideHT.m> 0.5) #only use rows where tide height is >0
+
+#add season column
+seasontemp=hightidetemp %>%
+  dplyr::select(-c("finalBPM","hallpercent","binary","stationId","datum","TimeUTC")) %>% 
+  mutate(Season = case_when( #new variable
+      DateTime >= "2022-07-15 00:00:00" & DateTime <= "2022-09-30 23:59:00" ~ "Summer", #define condition for factor levels
+      DateTime >="2022-10-01 00:00:00" & DateTime <= "2022-12-31 23:59:00" ~ "Fall",
+      DateTime >= "2023-01-01 00:00:00" & DateTime <= "2023-03-31 23:59:00" ~ "Winter",
+      DateTime >= "2023-04-01 00:00:00" & DateTime <= "2023-06-19 23:59:00" ~ "Spring",
+      TRUE ~ NA)) %>% 
+  filter(!is.na(Season)) %>% #display error if a value is not assigned to one of the previous groups
+  mutate_if(is.character, as.factor) %>% 
+  mutate(Season = fct_relevel(Season,c("Summer", "Fall", "Winter", "Spring")),
+         Treatment= fct_relevel(Treatment,c("Oyster","Eelgrass", "Mud"))) %>% 
+  distinct()
+
+dailytempseason=seasontemp %>% 
+  subset(Temp.C>0) %>% #remove the bad data
+  dplyr::select(c(-Code,TideHT.m)) %>% 
+  group_by(day=lubridate::floor_date(DateTime, "day"),Season) %>%
+  dplyr::select(-DateTime) %>% 
+  summarise(avgtemp=mean(Temp.C, na.rm=TRUE))
+
+dailytempseason %>% 
+  group_by(Season) %>% 
+  summarise(avgtemp=mean(avgtemp))
+  
+ggplot(dailytempseason,aes(Season, avgtemp,fill=Season))+
+  geom_boxplot(col="black")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  stat_compare_means(comparisons = my_comparisons_season,label.y = c(24.5, 26, 27.5,29,30.5,32),aes(label = after_stat(p.signif)))+
+  theme_classicmodify()+
+  stat_n_text(size=4,y.pos=1.27) +
+  scale_fill_manual(values=season_palette)+
+  theme(legend.position="none")+
+  labs(y="Average daily water temperature (°C)")+
+  ylim(0,33)
+
+ggsave("avgwatertemp_season.png",path=plots, width=6, height=6)
+
+# Compute the analysis of variance
+res.aov <- aov(avgtemp ~ Season, data=dailytempseason)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=<2e-16
+
+#test for homogeneity
+leveneTest(avgtemp ~ Season, data=dailytempseason)
+#not equal variances p=<2e-16
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals )
+#pvalue=6.145e-06 so not normal
+
+kruskal.test(avgtemp ~ Season, data=dailytempseason)
+#pvalue=<2.2e-16
+
+#dunn test pairwise for KW
+dunnTest(avgtemp ~ Season, data=dailytempseason, method="bonferroni")
+#says all sig diff from each other
+
+##########
+#SITE
+dailytempsite=seasontemp %>% 
+  subset(Temp.C>0) %>% #remove the bad data
+  select(c(-Code,TideHT.m)) %>% 
+  group_by(day=lubridate::floor_date(DateTime, "day"),Site) %>%
+  select(-DateTime) %>% 
+  summarise(avgtemp=mean(Temp.C, na.rm=TRUE))
+
+ggplot(dailytempsite,aes(Site, avgtemp,fill=Site))+
+  geom_boxplot(col="black")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+ # stat_compare_means(comparisons = my_comparisons_site,label.y = c(26, 27.5, 29,30.5,32),aes(label = after_stat(p.signif)))+ 
+  theme_classicmodify()+
+  scale_fill_manual(values=sitePalette)+
+  theme(legend.position="none")+
+  stat_n_text(size=4,y.pos=1.27) +
+  labs(y="Average daily water temperature (°C)")+
+  ylim(0,33)
+
+ggsave("avgwatertemp_site.png",path=plots, width=6, height=6)
+
+# Compute the analysis of variance
+res.aov <- aov(avgtemp ~ Site, data=dailytempsite)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.207
+
+#tukey pairwise
+TukeyHSD(res.aov)
+#non sig
+
+#or pairwise
+pairwise.t.test(dailytempsite$avgtemp,dailytempsite$Site,
+                 p.adjust.method = "BH")
+#non sig
+
+#test for homogeneity
+leveneTest(avgtemp ~ Site, data=dailytempsite)
+#equal variances 0.5653
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals )
+#pvalue=<2.2e-16 so not normal
+
+kruskal.test(avgtemp ~ Site, data=dailytempsite)
+#pvalue=0.05703
+
+##########
+#TREATMENT
+
+dailytemptreat=seasontemp %>% 
+  subset(Temp.C>0) %>% #remove the bad data
+  dplyr::select(c(-Code,TideHT.m)) %>% 
+  group_by(day=lubridate::floor_date(DateTime, "day"),Treatment) %>%
+  dplyr::select(-DateTime) %>% 
+  summarise(avgtemp=mean(Temp.C, na.rm=TRUE))
+
+ggplot(dailytemptreat,aes(Treatment, avgtemp,fill=Treatment))+
+  geom_boxplot(col="black")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+ # stat_compare_means(comparisons = my_comparisons_treat2,label.y = c(25, 26.7, 29),aes(label = after_stat(p.signif)))+
+  theme_classicmodify()+
+  scale_fill_manual(values=treatment_palette)+
+  theme(legend.position="none")+
+  stat_n_text(size=4,y.pos=1.27) +
+  labs(y="Average daily water temperature (°C)")+
+  ylim(0,33)
+
+ggsave("avgwatertemp_treat.png",path=plots, width=6, height=6)
+
+# Compute the analysis of variance
+res.aov <- aov(avgtemp ~ Treatment, data=dailytemptreat)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=<2e-16
+
+#test for homogeneity
+leveneTest(avgtemp ~ Treatment, data=dailytemptreat)
+#not equal variances p=<2e-16
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals )
+#pvalue=<2.2e-16 so not normal
+
+kruskal.test(avgtemp ~ Treatment, data=dailytemptreat)
+#pvalue=0.054
+
+```
+
+#find lowtide temps
+```{r}
+#combine tide height and temp.c 
+lowtidetemp=merge(allhrgapemeta,tides, by="DateTime")
+
+lowtidetemp=lowtidetemp %>% 
+  subset(TideHT.m< -0.1) 
+  #select(-c("stationId","datum","TimeUTC"))
+
+lowseasontemp=lowtidetemp %>%
+  select(-c("finalBPM","hallpercent","binary","stationId","datum","TimeUTC")) %>% 
+  mutate(Season = case_when( #new variable
+      DateTime >= "2022-07-15 00:00:00" & DateTime <= "2022-09-30 23:59:00" ~ "Summer", #define condition for factor levels
+      DateTime >="2022-10-01 00:00:00" & DateTime <= "2022-12-31 23:59:00" ~ "Fall",
+      DateTime >= "2023-01-01 00:00:00" & DateTime <= "2023-03-31 23:59:00" ~ "Winter",
+      DateTime >= "2023-04-01 00:00:00" & DateTime <= "2023-06-19 23:59:00" ~ "Spring",
+      TRUE ~ NA)) %>% 
+  filter(!is.na(Season)) %>% #display error if a value is not assigned to one of the previous groups
+  mutate_if(is.character, as.factor) %>% 
+  mutate(Season = fct_relevel(Season,c("Summer","Fall", "Winter", "Spring")),
+         Treatment= fct_relevel(Treatment,c("Oyster","Eelgrass", "Mud"))) %>% 
+  distinct()
+
+
+
+lowdailytempseason=lowseasontemp %>% 
+  subset(Temp.C>0) %>% #remove the bad data
+  select(c(-Code,TideHT.m)) %>% 
+  group_by(day=lubridate::floor_date(DateTime, "day"),Season) %>%
+  select(-DateTime) %>% 
+  summarise(avgtemp=mean(Temp.C, na.rm=TRUE))
+  
+ggplot(lowdailytempseason,aes(Season, avgtemp,fill=Season))+
+  geom_boxplot(col="black")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  stat_compare_means(comparisons = my_comparisons_season,label.y = c(24, 25.5, 27,28.5,30,32),aes(label = after_stat(p.signif)))+
+  theme_classicmodify()+
+  stat_n_text(size=4,y.pos=1.27) +
+  scale_fill_manual(values=season_palette)+
+  theme(legend.position="none")+
+  labs(y="Average daily low tide oyster temp (°C)")+
+  ylim(0,33)
+
+ggsave("lowtide_avgwatertemp_season.png",path=plots, width=6, height=6)
+
+# Compute the analysis of variance
+res.aov <- aov(avgtemp ~ Season, data=lowdailytempseason)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=<2e-16
+
+#tukey pairwise
+TukeyHSD(res.aov)
+#All other comparisons sig except fall and spring
+
+#or pairwise
+pairwise.t.test(lowdailytempseason$avgtemp,lowdailytempseason$Season,
+                 p.adjust.method = "BH")
+#All other comparisons sig except fall and spring
+
+#test for homogeneity
+leveneTest(avgtemp ~ Season, data=lowdailytempseason)
+#equal variances p=0.1322
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals )
+#pvalue=0.2202 so normal
+
+##########
+#SITE
+lowdailytempsite=lowseasontemp %>% 
+  subset(Temp.C>0) %>% #remove the bad data
+  select(c(-Code,TideHT.m)) %>% 
+  group_by(day=lubridate::floor_date(DateTime, "day"),Site) %>%
+  select(-DateTime) %>% 
+  summarise(avgtemp=mean(Temp.C, na.rm=TRUE))
+
+ggplot(lowdailytempsite,aes(Site, avgtemp,fill=Site))+
+  geom_boxplot(col="black")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+ # stat_compare_means(comparisons = my_comparisons_site,label.y = c(26, 27.5, 29,30.5,32),aes(label = after_stat(p.signif)))+
+  theme_classicmodify()+
+  scale_fill_manual(values=sitePalette)+
+  theme(legend.position="none")+
+  stat_n_text(size=4,y.pos=1.27) +
+  labs(y="Average daily low tide oyster temp (°C)")+
+  ylim(0,33)
+
+ggsave("lowavgwatertemp_site.png",path=plots, width=6, height=6)
+
+# Compute the analysis of variance
+res.aov <- aov(avgtemp ~ Site, data=lowdailytempsite)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.708
+
+#tukey pairwise
+TukeyHSD(res.aov)
+#non sig
+
+#or pairwise
+pairwise.t.test(lowdailytempsite$avgtemp,lowdailytempsite$Site,
+                 p.adjust.method = "BH")
+#non sig
+
+#test for homogeneity
+leveneTest(avgtemp ~ Site, data=lowdailytempsite)
+#equal variances 0.2914
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals )
+#pvalue=0.00044 so not normal
+
+kruskal.test(avgtemp ~ Site, data=lowdailytempsite)
+#pvalue=0.85333
+
+##########
+#TREATMENT
+
+lowdailytemptreat=lowseasontemp %>% 
+  subset(Temp.C>0) %>% #remove the bad data
+  select(-c("Code","TideHT.m")) %>% 
+  group_by(day=lubridate::floor_date(DateTime, "day"),Treatment) %>%
+  select(-DateTime) %>% 
+  summarise(avgtemp=mean(Temp.C, na.rm=TRUE))
+
+
+ggplot(lowdailytemptreat,aes(Treatment, avgtemp,fill=Treatment))+
+  geom_boxplot(col="black")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  #stat_compare_means(comparisons = my_comparisons_treat2,label.y = c(25, 26.7, 29),aes(label = after_stat(p.signif)))+
+  theme_classicmodify()+
+  scale_fill_manual(values=treatment_palette)+
+  theme(legend.position="none")+
+  stat_n_text(size=4,y.pos=1.27) +
+  labs(y="Average daily low tide oyster temp (°C)")+
+  ylim(0,33)
+
+ggsave("lowavgwatertemp_treat.png",path=plots, width=6, height=6)
+
+# Compute the analysis of variance
+res.aov <- aov(avgtemp ~ Treatment, data=lowdailytemptreat)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.45
+
+#tukey pairwise
+TukeyHSD(res.aov)
+#All other comparisons sig
+
+#or pairwise
+pairwise.t.test(lowdailytemptreat$avgtemp,lowdailytemptreat$Treatment,
+                 p.adjust.method = "BH")
+#winter sig diff from fall,spring, and summer
+#All other comparisons not sig
+
+#test for homogeneity
+leveneTest(avgtemp ~ Treatment, data=lowdailytemptreat)
+#not equal variances p=0.01448
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals )
+#pvalue=0.00015 so not normal
+
+kruskal.test(avgtemp ~ Treatment, data=lowdailytemptreat)
+#pvalue=0.7815
+
+#######
+#Treatment by Season
+lowdailytempseasontreat=lowseasontemp %>% 
+  subset(Temp.C>0) %>% #remove the bad data
+  select(-c("Code","TideHT.m","Site")) %>% 
+  group_by(day=lubridate::floor_date(DateTime, "day"),Season,Treatment) %>%
+  select(-DateTime) %>% 
+  summarise(avgtemp=mean(Temp.C, na.rm=TRUE)) %>% 
+  distinct()
+
+ggplot(lowdailytempseasontreat,aes(Season, avgtemp,fill=Treatment))+
+  geom_boxplot(col="black")+
+  #stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  #stat_compare_means(comparisons = my_comparisons_treat2,label.y = c(25, 26.7, 29),aes(label = after_stat(p.signif)))+
+  theme_classicmodify()+
+  scale_fill_manual(values=treatment_palette)+
+  theme(legend.position="none")+
+  stat_n_text(size=4,y.pos=1.27) +
+  labs(y="Average daily low tide oyster temp (°C)")+
+  ylim(0,33)
+
+ggsave("lowavgwatertemp_treat_season.png",path=plots, width=6, height=6)
+
+```
+
+#find oyster temps
+```{r}
+#combine tide height and temp.c 
+hightidetemp=merge(allhrgapemeta,tides, by="DateTime")
+hightidetemp$DateTime=as.POSIXct(hightidetemp$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+
+oystertemp=hightidetemp %>% 
+  slice(-c(1622, 1636, 1722, 1750, 1764, 1772, 1776, 1788)) #remove outliers 
+
+#add season column
+seasontemp=oystertemp %>%
+  dplyr::select(-c("finalBPM","hallpercent","binary","stationId","datum","TimeUTC")) %>% 
+  mutate(Season = case_when( #new variable
+      DateTime >= "2022-07-15 00:00:00" & DateTime <= "2022-09-30 23:59:00" ~ "Summer", #define condition for factor levels
+      DateTime >="2022-10-01 00:00:00" & DateTime <= "2022-12-31 23:59:00" ~ "Fall",
+      DateTime >= "2023-01-01 00:00:00" & DateTime <= "2023-03-31 23:59:00" ~ "Winter",
+      DateTime >= "2023-04-01 00:00:00" & DateTime <= "2023-06-19 23:59:00" ~ "Spring",
+      TRUE ~ NA)) %>% 
+  filter(!is.na(Season)) %>% #display error if a value is not assigned to one of the previous groups
+  mutate_if(is.character, as.factor) %>% 
+  mutate(Season = fct_relevel(Season,c("Summer", "Fall", "Winter", "Spring")),
+         Treatment= fct_relevel(Treatment,c("Oyster","Eelgrass", "Mud"))) %>% 
+  distinct()
+
+dailytempseason=seasontemp %>% 
+  subset(Temp.C>0) %>% #remove the bad data
+  dplyr::select(c(-Code,TideHT.m)) %>% 
+  group_by(day=lubridate::floor_date(DateTime, "day"),Season) %>%
+  dplyr::select(-DateTime) %>% 
+  summarise(avgtemp=mean(Temp.C, na.rm=TRUE))
+
+dailytempseason %>% 
+  group_by(Season) %>% 
+  summarise(avgtemp=mean(avgtemp))
+  
+ggplot(dailytempseason,aes(Season, avgtemp,fill=Season))+
+  geom_boxplot(col="black")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  stat_compare_means(comparisons = my_comparisons_season,label.y = c(24.5, 26, 27.5,29,30.5,32),aes(label = after_stat(p.signif)))+
+  theme_classicmodify()+
+  stat_n_text(size=4,y.pos=1.27) +
+  scale_fill_manual(values=season_palette)+
+  theme(legend.position="none")+
+  labs(y="Average daily water temperature (°C)")+
+  ylim(0,33)
+
+ggsave("avgwatertemp_season.png",path=plots, width=6, height=6)
+
+# Compute the analysis of variance
+res.aov <- aov(avgtemp ~ Season, data=dailytempseason)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=<2e-16
+
+#test for homogeneity
+leveneTest(avgtemp ~ Season, data=dailytempseason)
+#not equal variances p=<2e-16
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals )
+#pvalue=6.145e-06 so not normal
+
+kruskal.test(avgtemp ~ Season, data=dailytempseason)
+#pvalue=<2.2e-16
+
+#dunn test pairwise for KW
+dunnTest(avgtemp ~ Season, data=dailytempseason, method="bonferroni")
+#says all sig diff from each other
+
+##########
+#SITE
+dailytempsite=seasontemp %>% 
+  subset(Temp.C>0) %>% #remove the bad data
+  select(c(-Code,TideHT.m)) %>% 
+  group_by(day=lubridate::floor_date(DateTime, "day"),Site) %>%
+  select(-DateTime) %>% 
+  summarise(avgtemp=mean(Temp.C, na.rm=TRUE))
+
+ggplot(dailytempsite,aes(Site, avgtemp,fill=Site))+
+  geom_boxplot(col="black")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+ # stat_compare_means(comparisons = my_comparisons_site,label.y = c(26, 27.5, 29,30.5,32),aes(label = after_stat(p.signif)))+ 
+  theme_classicmodify()+
+  scale_fill_manual(values=sitePalette)+
+  theme(legend.position="none")+
+  stat_n_text(size=4,y.pos=1.27) +
+  labs(y="Average daily water temperature (°C)")+
+  ylim(0,33)
+
+ggsave("avgwatertemp_site.png",path=plots, width=6, height=6)
+
+# Compute the analysis of variance
+res.aov <- aov(avgtemp ~ Site, data=dailytempsite)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.207
+
+#test for homogeneity
+leveneTest(avgtemp ~ Site, data=dailytempsite)
+#equal variances 0.5653
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals )
+#pvalue=<2.2e-16 so not normal
+
+kruskal.test(avgtemp ~ Site, data=dailytempsite)
+#pvalue=0.09288
+
+##########
+#TREATMENT
+
+dailytemptreat=seasontemp %>% 
+  subset(Temp.C>0) %>% #remove the bad data
+  dplyr::select(c(-Code,TideHT.m)) %>% 
+  group_by(day=lubridate::floor_date(DateTime, "day"),Treatment) %>%
+  dplyr::select(-DateTime) %>% 
+  summarise(avgtemp=mean(Temp.C, na.rm=TRUE))
+
+ggplot(dailytemptreat,aes(Treatment, avgtemp,fill=Treatment))+
+  geom_boxplot(col="black")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+ # stat_compare_means(comparisons = my_comparisons_treat2,label.y = c(25, 26.7, 29),aes(label = after_stat(p.signif)))+
+  theme_classicmodify()+
+  scale_fill_manual(values=treatment_palette)+
+  theme(legend.position="none")+
+  stat_n_text(size=4,y.pos=1.27) +
+  labs(y="Average daily water temperature (°C)")+
+  ylim(0,33)
+
+ggsave("avgwatertemp_treat.png",path=plots, width=6, height=6)
+
+# Compute the analysis of variance
+res.aov <- aov(avgtemp ~ Treatment, data=dailytemptreat)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=<2e-16
+
+#test for homogeneity
+leveneTest(avgtemp ~ Treatment, data=dailytemptreat)
+#not equal variances p=<2e-16
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals )
+#pvalue=<2.2e-16 so not normal
+
+kruskal.test(avgtemp ~ Treatment, data=dailytemptreat)
+#pvalue=0.054
+
+```
+
+#multipanel of gape, precip, temp, and tide height 
+```{r}
+# full experiment
+mytimestart = as.POSIXct('2022-07-15 00:00:00', tz = 'UTC')
+mytimeend = as.POSIXct('2023-06-19 00:00:00', tz = 'UTC')
+
+#wet season
+mytimestart = as.POSIXct('2022-11-06 00:00:00', tz = 'UTC')
+mytimeend = as.POSIXct('2022-11-12 23:59:00', tz = 'UTC')
+
+#november week 
+mytimestart = as.POSIXct('2023-01-01 00:00:00', tz = 'UTC')
+mytimeend = as.POSIXct('2023-01-07 00:00:00', tz = 'UTC')
+
+##Precip data
+#only pull out 00:53:00 numbers from precip. Precip every hour
+precip53 <- subset(precip, format(precip$DateTimeUTC, "%M") %in% c('53'))
+precip53$DateTime=precip53$DateTimeUTC
+precip53sub=subset(precip53, select=-c(StationID, DateTimeUTC, RH))
+#get culm rainfall per day
+precip53sub$Precip1hr.mm[is.na(precip53sub$Precip1hr.mm)] <- 0
+
+#oyster/temp data
+# oy="W.E.3.1010"
+# hall=loadComboGape(oy)
+# plot(hall$DateTime, hall$hallpercent)
+#subset 23/01/20-23/07/01
+
+#tides
+tidessub= subset(tides, select = -c(TimeUTC,datum, stationId))
+# 
+#put all data frames into list
+# multidata <- list(hall, precip53sub, tidessub)
+# #merge all data frames in list
+# multidata=multidata %>% reduce(full_join, by='DateTime')
+# 
+# multisub=multidata[multidata$DateTime >= "2023-01-20" & multidata$DateTime <= "2023-06-15", ]
+
+#oy lists
+##################### 
+#lists 
+#focusing on just Jan-April 
+#pull out just a few oysters from dataframe
+alllist=c("D.E.1.1032", "D.E.2.1028", "D.E.3.1029", "D.E.4.1033", "D.E.5.1031", "P.E.1.1073", "P.E.1.1078", "P.E.2.1074", "P.E.3.1075", "P.E.3.1079", "P.E.4.1077", "P.E.5.1076", "W.E.3.1007", "W.E.3.1010", "W.E.5.1002", "W.E.5.1009", "W.E.6.1004", "W.E.6.1005","D.O.1.1041", "D.O.1.1100", "D.O.2.1037","D.O.3.1044","D.O.5.1038", "P.O.2.1060","P.O.3.1059","P.O.3.1060","P.O.4.1062","P.O.5.1065","S.O.3.1082","S.O.4.1083","W.O.1.1096","W.O.2.1011","W.O.2.1012","W.O.2.1018","W.O.3.1013","W.O.4.1015","W.O.5.1016","D.M.1.1050", "D.M.1.1091", "D.M.1.1102","D.M.2.1047","D.M.2.1052", "D.M.2.1053","D.M.3.1045","D.M.4.1049","D.M.5.1047","D.M.6.1054","P.M.1.1071","P.M.2.1070","P.M.2.1072","S.M.3.1088","W.M.1.1026","W.M.1.1027","W.M.2.1019","W.M.2.1020","W.M.3.1021","W.M.3.1022","W.M.4.1023")
+
+alllisttest=c("D.E.1.1032", "D.E.2.1028", "D.E.3.1029", "D.E.4.1033", "D.E.5.1031", "P.E.1.1073", "P.E.1.1078", "P.E.2.1074", "P.E.3.1075", "P.E.3.1079", "P.E.4.1077", "P.E.5.1076", "W.E.3.1007", "W.E.3.1010", "W.E.5.1002", "W.E.5.1009",  "W.E.6.1005","D.O.1.1041", "D.O.1.1100", "D.O.2.1037","D.O.3.1044","D.O.5.1038", "P.O.2.1060","P.O.3.1059","P.O.3.1060","P.O.4.1062","S.O.3.1082","S.O.4.1083","W.O.1.1096","W.O.2.1011","W.O.2.1012","W.O.2.1018","W.O.3.1013","W.O.4.1015","W.O.5.1016","D.M.1.1050", "D.M.1.1091", "D.M.1.1102","D.M.2.1047","D.M.2.1052", "D.M.2.1053","D.M.3.1045","D.M.4.1049","D.M.5.1047","D.M.6.1054","P.M.1.1071","P.M.2.1070","P.M.2.1072","S.M.3.1088","W.M.1.1026","W.M.1.1027","W.M.2.1019","W.M.2.1020","W.M.3.1021","W.M.3.1022","W.M.4.1023")
+#EELGRASS TREATMENT ######
+eelgrasslist=c("D.E.1.1032", "D.E.2.1028", "D.E.3.1029", "D.E.4.1033", "D.E.5.1031", "P.E.1.1073", "P.E.1.1078", "P.E.2.1074", "P.E.3.1075", "P.E.3.1079", "P.E.4.1077", "P.E.5.1076", "W.E.3.1007", "W.E.3.1010", "W.E.5.1002", "W.E.5.1009", "W.E.6.1004", "W.E.6.1005")
+
+#OYSTER TREATMENT ######
+oytreatlist=c("D.O.1.1041", "D.O.1.1100", "D.O.2.1037","D.O.3.1044","D.O.5.1038", "P.O.2.1060","P.O.3.1059","P.O.3.1060","P.O.4.1062","P.O.5.1065","S.O.3.1082","S.O.4.1083","W.O.1.1096","W.O.2.1011","W.O.2.1012","W.O.2.1018","W.O.3.1013","W.O.4.1015","W.O.5.1016")
+
+#MUD TREATMENT ######
+mudtreatlist=c("D.M.1.1050", "D.M.1.1091", "D.M.1.1102","D.M.2.1047","D.M.2.1052", "D.M.2.1053","D.M.3.1045","D.M.4.1049","D.M.5.1047","D.M.6.1054","P.M.1.1071","P.M.2.1070","P.M.2.1072","S.M.3.1088","W.M.1.1026","W.M.1.1027","W.M.2.1019","W.M.2.1020","W.M.3.1021","W.M.3.1022","W.M.4.1023")
+
+#DeAnza list ###
+dzlist=c("D.E.1.1032", "D.E.2.1028", "D.E.3.1029", "D.E.4.1033", "D.E.5.1031","D.O.1.1041", "D.O.1.1100", "D.O.2.1037","D.O.3.1044","D.O.5.1038","D.M.1.1050", "D.M.1.1091", "D.M.1.1102","D.M.2.1047","D.M.2.1052", "D.M.2.1053","D.M.3.1045","D.M.4.1049","D.M.5.1047","D.M.6.1054")
+
+#PCH list
+pchlist=c("P.E.1.1073", "P.E.1.1078", "P.E.2.1074", "P.E.3.1075", "P.E.3.1079", "P.E.4.1077", "P.E.5.1076","P.O.2.1060","P.O.3.1059","P.O.3.1060","P.O.4.1062","P.O.5.1065","P.M.1.1071","P.M.2.1070","P.M.2.1072")
+
+#Shellmaker list
+slist=c("S.O.3.1082","S.O.4.1083","S.M.3.1088")
+
+#Westcliff list
+westlist=c("W.E.3.1007", "W.E.3.1010", "W.E.5.1002", "W.E.5.1009", "W.E.6.1004", "W.E.6.1005","W.O.1.1096","W.O.2.1011","W.O.2.1012","W.O.2.1018","W.O.3.1013","W.O.4.1015","W.O.5.1016","W.M.1.1026","W.M.1.1027","W.M.2.1019","W.M.2.1020","W.M.3.1021","W.M.3.1022","W.M.4.1023")
+
+#############
+
+for (i in alllist){
+  df=allhrgapemeta[allhrgapemeta$Code == i, c("DateTime","hallpercent","Code","finalBPM")]
+  write.csv(df, paste0(gapeplot, i, "_hall.csv"),row.names=FALSE)
+}
+
+for (i in alllist){
+    assign(paste0(i),  # Read and store data frames
+         read.csv(paste0(gapeplot, i, "_hall.csv"),as.is=TRUE))
+}
+#changing Eelgrass to POSIXct
+######### 
+
+D.E.1.1032$DateTime=as.POSIXct(D.E.1.1032$DateTime, tz="UTC")
+D.E.2.1028$DateTime=as.POSIXct(D.E.2.1028$DateTime, tz="UTC")
+D.E.3.1029$DateTime=as.POSIXct(D.E.3.1029$DateTime, tz="UTC")
+D.E.4.1033$DateTime=as.POSIXct(D.E.4.1033$DateTime, tz="UTC")
+D.E.5.1031$DateTime=as.POSIXct(D.E.5.1031$DateTime, tz="UTC")
+P.E.1.1073$DateTime=as.POSIXct(P.E.1.1073$DateTime, tz="UTC")
+P.E.1.1078$DateTime=as.POSIXct(P.E.1.1078$DateTime, tz="UTC")
+P.E.2.1074$DateTime=as.POSIXct(P.E.2.1074$DateTime, tz="UTC")
+P.E.3.1075$DateTime=as.POSIXct(P.E.3.1075$DateTime, tz="UTC")
+P.E.3.1079$DateTime=as.POSIXct(P.E.3.1079$DateTime, tz="UTC")
+P.E.4.1077$DateTime=as.POSIXct(P.E.4.1077$DateTime, tz="UTC")
+P.E.5.1076$DateTime=as.POSIXct(P.E.5.1076$DateTime, tz="UTC")
+W.E.3.1007$DateTime=as.POSIXct(W.E.3.1007$DateTime, tz="UTC")
+W.E.3.1010$DateTime=as.POSIXct(W.E.3.1010$DateTime, tz="UTC")
+W.E.5.1002$DateTime=as.POSIXct(W.E.5.1002$DateTime, tz="UTC")
+W.E.5.1009$DateTime=as.POSIXct(W.E.5.1009$DateTime, tz="UTC")
+W.E.6.1004$DateTime=as.POSIXct(W.E.6.1004$DateTime, tz="UTC")
+W.E.6.1005$DateTime=as.POSIXct(W.E.6.1005$DateTime, tz="UTC")
+
+#changing oyster to POSIXct
+######
+
+D.O.1.1041$DateTime=as.POSIXct(D.O.1.1041$DateTime, tz="UTC")
+D.O.1.1100$DateTime=as.POSIXct(D.O.1.1100$DateTime, tz="UTC")
+D.O.2.1037$DateTime=as.POSIXct(D.O.2.1037$DateTime, tz="UTC")
+D.O.3.1044$DateTime=as.POSIXct(D.O.3.1044$DateTime, tz="UTC")
+D.O.5.1038$DateTime=as.POSIXct(D.O.5.1038$DateTime, tz="UTC")
+P.O.2.1060$DateTime=as.POSIXct(P.O.2.1060$DateTime, tz="UTC")
+P.O.3.1059$DateTime=as.POSIXct(P.O.3.1059$DateTime, tz="UTC")
+P.O.3.1060$DateTime=as.POSIXct(P.O.3.1060$DateTime, tz="UTC")
+P.O.4.1062$DateTime=as.POSIXct(P.O.4.1062$DateTime, tz="UTC")
+P.O.5.1065$DateTime=as.POSIXct(P.O.5.1065$DateTime, tz="UTC")
+S.O.3.1082$DateTime=as.POSIXct(S.O.3.1082$DateTime, tz="UTC")
+S.O.4.1083$DateTime=as.POSIXct(S.O.4.1083$DateTime, tz="UTC")
+W.O.1.1096$DateTime=as.POSIXct(W.O.1.1096$DateTime, tz="UTC")
+W.O.2.1011$DateTime=as.POSIXct(W.O.2.1011$DateTime, tz="UTC")
+W.O.2.1012$DateTime=as.POSIXct(W.O.2.1012$DateTime, tz="UTC")
+W.O.2.1018$DateTime=as.POSIXct(W.O.2.1018$DateTime, tz="UTC")
+W.O.3.1013$DateTime=as.POSIXct(W.O.3.1013$DateTime, tz="UTC")
+W.O.4.1015$DateTime=as.POSIXct(W.O.4.1015$DateTime, tz="UTC")
+W.O.5.1016$DateTime=as.POSIXct(W.O.5.1016$DateTime, tz="UTC")
+#changing Mud to POSIXct
+##########
+
+D.M.1.1050$DateTime=as.POSIXct(D.M.1.1050$DateTime, tz="UTC")
+D.M.1.1091$DateTime=as.POSIXct(D.M.1.1091$DateTime, tz="UTC")
+D.M.1.1102$DateTime=as.POSIXct(D.M.1.1102$DateTime, tz="UTC")
+D.M.2.1047$DateTime=as.POSIXct(D.M.2.1047$DateTime, tz="UTC")
+D.M.2.1052$DateTime=as.POSIXct(D.M.2.1052$DateTime, tz="UTC")
+D.M.2.1053$DateTime=as.POSIXct(D.M.2.1053$DateTime, tz="UTC")
+D.M.3.1045$DateTime=as.POSIXct(D.M.3.1045$DateTime, tz="UTC")
+D.M.4.1049$DateTime=as.POSIXct(D.M.4.1049$DateTime, tz="UTC")
+D.M.5.1047$DateTime=as.POSIXct(D.M.5.1047$DateTime, tz="UTC")
+D.M.6.1054$DateTime=as.POSIXct(D.M.6.1054$DateTime, tz="UTC")
+P.M.1.1071$DateTime=as.POSIXct(P.M.1.1071$DateTime, tz="UTC")
+P.M.2.1070$DateTime=as.POSIXct(P.M.2.1070$DateTime, tz="UTC")
+P.M.2.1072$DateTime=as.POSIXct(P.M.2.1072$DateTime, tz="UTC")
+S.M.3.1088$DateTime=as.POSIXct(S.M.3.1088$DateTime, tz="UTC")
+W.M.1.1026$DateTime=as.POSIXct(W.M.1.1026$DateTime, tz="UTC")
+W.M.1.1027$DateTime=as.POSIXct(W.M.1.1027$DateTime, tz="UTC")
+W.M.2.1019$DateTime=as.POSIXct(W.M.2.1019$DateTime, tz="UTC")
+W.M.2.1020$DateTime=as.POSIXct(W.M.2.1020$DateTime, tz="UTC")
+W.M.3.1021$DateTime=as.POSIXct(W.M.3.1021$DateTime, tz="UTC")
+W.M.3.1022$DateTime=as.POSIXct(W.M.3.1022$DateTime, tz="UTC")
+W.M.4.1023$DateTime=as.POSIXct(W.M.4.1023$DateTime, tz="UTC")
+
+##########
+
+```
+
+#figure label function
+```{r}
+fig_label <- function(text, region="figure", pos="topleft", cex=NULL, ...) {
+ 
+  region <- match.arg(region, c("figure", "plot", "device"))
+  pos <- match.arg(pos, c("topleft", "top", "topright", 
+                          "left", "center", "right", 
+                          "bottomleft", "bottom", "bottomright"))
+ 
+  if(region %in% c("figure", "device")) {
+    ds <- dev.size("in")
+    # xy coordinates of device corners in user coordinates
+    x <- grconvertX(c(0, ds[1]), from="in", to="user")
+    y <- grconvertY(c(0, ds[2]), from="in", to="user")
+ 
+    # fragment of the device we use to plot
+    if(region == "figure") {
+      # account for the fragment of the device that 
+      # the figure is using
+      fig <- par("fig")
+      dx <- (x[2] - x[1])
+      dy <- (y[2] - y[1])
+      x <- x[1] + dx * fig[1:2]
+      y <- y[1] + dy * fig[3:4]
+    } 
+  }
+ 
+  # much simpler if in plotting region
+  if(region == "plot") {
+    u <- par("usr")
+    x <- u[1:2]
+    y <- u[3:4]
+  }
+ 
+  sw <- strwidth(text, cex=cex) * 60/100
+  sh <- strheight(text, cex=cex) * 60/100
+ 
+  x1 <- switch(pos,
+    topleft     =x[1] + sw, 
+    left        =x[1] + sw,
+    bottomleft  =x[1] + sw,
+    top         =(x[1] + x[2])/2,
+    center      =(x[1] + x[2])/2,
+    bottom      =(x[1] + x[2])/2,
+    topright    =x[2] - sw,
+    right       =x[2] - sw,
+    bottomright =x[2] - sw)
+ 
+  y1 <- switch(pos,
+    topleft     =y[2] - sh,
+    top         =y[2] - sh,
+    topright    =y[2] - sh,
+    left        =(y[1] + y[2])/2,
+    center      =(y[1] + y[2])/2,
+    right       =(y[1] + y[2])/2,
+    bottomleft  =y[1] + sh,
+    bottom      =y[1] + sh,
+    bottomright =y[1] + sh)
+ 
+  old.par <- par(xpd=NA)
+  on.exit(par(old.par))
+ 
+  text(x1, y1, text, cex=cex, ...)
+  return(invisible(c(x,y)))
+}
+```
+
+
+#graph multipanel
+```{r}
+#graph 
+png(paste0(plots,"multiplot_november.png"), width = 8, height = 6, units = 'in', res = 300)
+
+#Set up graphing metrics 4 panel without HR
+# par(mfrow= c(4,1),mar = c(0,6,1,1.5),las = 1) #col=1, row=4 c(bottom, left, top, right)
+# mat<-matrix(c(1:5),5,1, byrow=T)
+# layout(mat, widths=1, heights= c(3, 3, 3, 3, 1))
+
+#graphing metrics for 5 panel plot
+par(mfrow= c(6,1),mar = c(0,6,1,1.5),las = 1) #col=1, row=5 c(bottom, left, top, right)
+mat<-matrix(c(1:6),nrow=6,ncol=1, byrow=T) #c(data elements), nrow=number of rows, ncol=number of columns, byrow=fill matrix by rows 
+layout(mat, widths=1, heights= c(1.25, 1.25, 1.25, 1.25, 1.25,0.5)) #widths=1 bc 1 column. 
+
+
+mylwd = 2
+mycex = 1.25
+mygray = 'grey80'
+mycex = 1.2
+mypch = 16 #"." #make tiny dots #16 regular dots
+myspan = 0.02
+pchcex = 0.5
+
+#library(RColorBrewer)
+# cols = brewer.pal('Set1', n = 9)
+# cl <- rainbow(60)
+# cols = paste0(cols,'AA')
+# col_vector=viridis::viridis(30)
+# col_vector=brewer.pal(n =16, name = "RdBu")
+#n <- 50
+#qual_col_pals = brewer.pal.info[brewer.pal.info$category == 'qual',]
+#col_vector = unlist(mapply(brewer.pal, qual_col_pals$maxcolors, rownames(qual_col_pals)))
+#make colors transparant
+
+#color = grDevices::colors()[grep('gr(a|e)y', grDevices::colors(), invert = T)]
+col_vector = c("#9e0142","#d53e4f","#f46d43","#fdae61","#fee08b","#e6f598","#abdda4","#66c2a5","#3288bd","#5e4fa2","#543005","#8c510a","#80cdc1","#35978f","#01665e","#003c30","#8e0152","#c51b7d","#de77ae","#f1b6da","#fde0ef","#b8e186","#4d9221","#9e0142","#d53e4f","#fdae61","#e6f598","#fee08b","#abdda4","#66c2a5","#ffffbf","#3288bd","#543005","#8c510a","#bf812d","#dfc27d","#276419","#f6e8c3","#c7eae5","#7fbc41","#f46d43","#5e4fa2","#80cdc1","#35978f","#003c30","#8e0152","#c51b7d","#de77ae","#f1b6da","#fde0ef","#e6f5d0","#b8e186","#7fbc41","#4d9221","#276419","#01665e")
+col_vector=paste0(col_vector,"AA")
+
+#water temp 
+plot(x=hightidetemp$DateTime, y=hightidetemp$Temp.C,xaxt='n', ylab="Temperature (°C)", type="n",cex.lab=1.17, cex.axis=1,xlim=c(mytimestart,mytimeend),ylim=c(0,37)) #ylim=c(8.5,22))
+rect(xleft = par()$usr[1],xright = par()$usr[2], ybottom = par()$usr[3], ytop = par()$usr[4], col = mygray) #gray background
+lines(precip53sub$DateTime, precip53sub$AirTempC, col="red")
+colcount=1
+#plot(x=hightidetemp$DateTime, y=hightidetemp$Temp.C)
+#plot(allgapemeta$DateTime, allgapemeta$hallpercent)
+for (c in alllist){
+  if (length(which(hightidetemp$Code==c))>0){
+      if (c!="P.O.2.1060"&c!="W.O.2.1012"&c!="P.O.5.1065"&c!="P.E.2.1074"&c!="W.M.2.1019"&c!="W.E.6.1005"&c!="W.M.1.1026"){
+   data = subset(hightidetemp, Code == c)
+  points(x = data$DateTime, y = data$Temp.C, 
+	col = col_vector[colcount],cex.lab=1.25)#pch=16)
+  #data$DateTime=as.numeric(data$DateTime)
+  #lo <- smooth.spline(data$Temp.C~data$DateTime)
+ # lines(lo, col=col_vector[colcount], lwd=2)
+  #qplot(x = data$DateTime, y = data$Temp.C, geom="smooth",
+	#	col = col_vector[colcount])
+  #,cex=mycex, span = myspan, pch = mypch, pchcex = pchcex)
+   colcount=colcount+1
+      }
+  }
+}
+fig_label("A", cex=2) 
+
+#lines(hightidetemp$Temp.C~hightidetemp$DateTime, col="red")
+#tides
+plot(x=tidessub$DateTime, y=tidessub$TideHT.m,xaxt='n', ylab="Tide Height (m)",col="blue", las=2, type="l",cex.lab=1.25, cex.axis=1,xlim=c(mytimestart,mytimeend))
+# mtext("Tide\n Height (m)",                     # Add title manually
+#       side = 2,
+#       line = 3,
+#       las = 1)
+rect(xleft = par()$usr[1],xright = par()$usr[2], ybottom = par()$usr[3], ytop = par()$usr[4], col = mygray) #gray background
+lines(tidessub$TideHT.m~tidessub$DateTime, col="blue")
+fig_label("B", cex=2) 
+
+
+#precip
+plot(x=precip53sub$DateTime, y=precip53sub$Precip1hr.mm, xaxt='n',ylab="Rainfall (mm)",col="orange",cex.lab=1.25, cex.axis=1, type="l",xlim=c(mytimestart,mytimeend))
+rect(xleft = par()$usr[1],xright = par()$usr[2], ybottom = par()$usr[3], ytop = par()$usr[4], col = mygray) #gray background
+lines(precip53sub$Precip1hr.mm~precip53sub$DateTime, col="#e57700")
+fig_label("C", cex=2) 
+
+
+#gape
+# Make base empty plot
+plot(hallpercent~DateTime,
+		data = na.omit(P.O.3.1059), 
+		col = 1,  
+		type = 'n',  # type = 'n' means don't plot any lines/points etc.  
+		las = 1, cex = mycex,
+		ylim = c(0,100), 
+		xlab = 'Date',
+		ylab = 'Gape opening (%)',
+		xaxs = 'i',
+		xlim=c(mytimestart,mytimeend),
+		xaxt = 'n',  # suppress the x-axix tick labels
+		cex.axis = mycex,
+		cex.lab = 1.05)
+rect(xleft = par()$usr[1],xright = par()$usr[2], ybottom = par()$usr[3], ytop = par()$usr[4], col = mygray) #gray background
+fig_label("D", cex=2) 
+# Plot individual Hall sensors
+colcount=1
+
+for (filename in alllist){
+  
+  i <- get(filename)
+  if (nrow(i)!=0){
+  points(hallpercent~DateTime, data = i, col = col_vector[colcount],pch=mypch,cex=pchcex)
+  if (filename!="P.O.2.1060"&filename!="W.O.2.1012"&filename!="P.O.5.1065"&filename!="P.E.2.1074"&filename!="W.M.2.1019"&filename!="W.E.6.1005"&filename!="W.M.1.1026"&filename!="W.M.2.1020"&filename!="S.M.3.1088"&filename!="W.M.3.1022"){
+  #  if (nrow(i)>1500){
+   loessFunc(x = i$DateTime, y = i$hallpercent, 
+ 		col = col_vector[colcount],cex=mycex, span = 0.02, pch = mypch, pchcex = pchcex)
+    print(paste0(filename,",",colcount))
+   # }
+    colcount=colcount+1
+  }
+    
+  }
+}
+#show_col(col_vector)
+
+#find ylim 
+# for (filename in alllist){
+#   
+#   i <- get(filename)
+#   ymax=max(i$finalBPM,na.rm=T)
+#   ymax=as.numeric(ymax)
+# }
+
+ymax=15
+
+
+#make hr plot
+# Make base empty plot
+plot(finalBPM~DateTime,
+		data = na.omit(P.O.3.1059), 
+		col = 1,  
+		ylim=c(2,16),
+		type = 'n',  # type = 'n' means don't plot any lines/points etc.  
+		las = 1, cex = mycex,
+		xlab = 'Date',
+		ylab = 'Heart rate (bpm)',
+		xaxs = 'i',
+		xlim=c(mytimestart,mytimeend),
+		#xaxt = 'n',  # suppress the x-axix tick labels
+		cex.axis = mycex,
+		cex.lab = mycex)
+rect(xleft = par()$usr[1],xright = par()$usr[2], ybottom = par()$usr[3], ytop = par()$usr[4],
+		col = mygray) #gray background
+fig_label("E", cex=2) 
+# Plot individual hr sensors
+colcount=1
+
+for (filename in alllist){
+  i <- get(filename)
+  if (nrow(i)!=0){
+    if(filename!="D.M.6.1054"){
+  points(finalBPM~DateTime, data = i, col = col_vector[colcount],pch=mypch,cex=pchcex)
+    
+   if (filename!="P.O.2.1060"&filename!="W.O.2.1012"&filename!="P.O.5.1065"&filename!="P.E.2.1074"&filename!="W.M.2.1019"&filename!="W.E.6.1005"&filename!="W.M.1.1026"&filename!="W.M.4.1023"&filename!="W.M.2.1020"&filename!="S.M.3.1088"&filename!="W.M.3.1022"){
+   loessFunc(x = i$DateTime, y = i$finalBPM, 
+   col = col_vector[colcount],cex=mycex, span = 0.02, pch = mypch, pchcex = pchcex)
+      print(paste0(filename,",",colcount))
+  colcount=colcount+1
+   }
+    }
+  }
+}
+# points(i$DateTime, i$finalBPM)
+
+dev.off()
+#show_col(col_vector)
+```
+
+#gape vs precip
+```{r}
+raingape=merge(precipsumday, allgapemeta, by="DateTime")
+
+
+
+```
+
+
 #seasons/precip
 ```{r}
 #get culm rainfall per day
-
 precip[is.na(precip)] <- 0
 
 #only pull out 00:53:00 numbers from precip
@@ -1063,14 +2056,118 @@ precipsumday=precip53 %>%
     .by= "day", 
     precipday = sum(Precip1hr.mm, na.rm=T))
 
-
 #get culm rainfall per month
-precipculm=precip53 %>% 
+precipculm=precip53 %>%
   summarise_by_time(
     .date_var=DateTimeUTC,
     .by= "month", 
     precipday = sum(Precip1hr.mm, na.rm=T)) %>%
   filter(DateTimeUTC>"2022-06-01" & DateTimeUTC<"2023-06-01")
+
+#get culm rainfall per week
+precipculmweek=precip53 %>%
+  summarise_by_time(
+    .date_var=DateTimeUTC,
+    .by= "week", 
+    precipday = sum(Precip1hr.mm, na.rm=T)) %>%
+  filter(DateTimeUTC>"2022-06-01" & DateTimeUTC<"2023-06-01")
+
+
+#get culm rainfall per month
+precipmonth=precip53 %>%
+  summarise_by_time(
+    .date_var=DateTimeUTC,
+    .by= "month", 
+    precipday = sum(Precip1hr.mm, na.rm=T)) 
+
+#data for stats
+precipstats=precipsumday %>% 
+      mutate(Season = case_when( #new variable
+      DateTimeUTC >= "2022-07-15 00:00:00" & DateTimeUTC <= "2022-09-30 23:59:00" ~ "Summer", #define condition for factor levels
+      DateTimeUTC >="2022-10-01 00:00:00" & DateTimeUTC <= "2022-12-31 23:59:00" ~ "Fall",
+      DateTimeUTC >= "2023-01-01 00:00:00" & DateTimeUTC <= "2023-03-31 23:59:00" ~ "Winter",
+      DateTimeUTC >= "2023-04-01 00:00:00" & DateTimeUTC <= "2023-06-19 23:59:00" ~ "Spring",
+      TRUE ~ NA)) %>% 
+  filter(!is.na(Season)) %>% #display error if a value is not assigned to one of the previous groups
+  mutate_if(is.character, as.factor) %>% 
+    mutate(Season = fct_relevel(Season,c("Summer", "Fall", "Winter", "Spring")))
+
+
+
+precipseasonplot=ggplot(precipstats,aes(Season, precipday,fill=Season))+ 
+  stat_summary(geom="bar",fun.y="sum",stat = "identity",color="black",fill=season_palette)+
+  stat_n_text(size=4,y.pos=390) +
+  geom_signif(comparisons = my_comparisons_season2,map_signif_level = TRUE,y_position = c(330, 355,365),annotation = c("****", "*","*"))+
+  #stat_compare_means(comparisons = my_comparisons_season2,label.y = c(330, 350,360),aes(label = after_stat(p.signif)))+
+  #geom_pwc(aes(group = Season), tip.length = 0.15, label = "{p.adj.signif}", p.adjust.method = "bonferroni", p.adjust.by = "panel",hide.ns = F,y.position = c(340, 350,360))+
+  scale_fill_manual(values = season_palette)+
+  theme_classic()+
+  labs(y="Cumulative precipitation (mm)",tag = "A")+
+  theme_classicmodify()+
+  theme(legend.position="none")
+
+dailywatertempplot=ggplot(tempdayseason,aes(Season, temp_day_mean,fill=Season))+
+    geom_boxplot()+
+  #geom_bar(stat="summary",position="dodge",fun="mean",col="black")+
+  #stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75,position=position_dodge(.9))+
+  theme_classicmodify()+
+  theme(legend.position = "none")+
+  scale_fill_manual(values=season_palette)+
+  labs(y="Average daily water temperature (°C)",tag = "B") +
+  stat_n_text(size=4,y.pos=37) +
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+stat_compare_means(comparisons = my_comparisons_season,label.y = c(25, 27, 29,31,33,35),aes(label = after_stat(p.signif)))
+
+ggarrange(precipseasonplot+
+                   theme(
+                  axis.title.y=element_text(size = 14),
+                  axis.text.y=element_text(size = 11),
+                  axis.text.x = element_blank(),
+                  axis.ticks.x = element_blank(),
+                  axis.title.x = element_blank() ), 
+           dailywatertempplot+ 
+            theme(axis.title.y=element_text(size = 14),
+                  axis.text.y=element_text(size = 13.5),
+                  #axis.text.x = element_blank(),
+                 # axis.ticks.y = element_blank(),
+                 # axis.title.y = element_blank() 
+              ), nrow=2, ncol=1)
+
+ggsave("precip_temp_season.png",path=plots,height=8, width=6)
+
+# Compute the analysis of variance
+res.aov <- aov(precipday ~ Season, data=precipstats)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.301
+
+#tukey pairwise
+TukeyHSD(res.aov)
+#All comparisons not sig
+
+#or pairwise
+pairwise.t.test(precipstats$precipday,precipstats$Season,
+                 p.adjust.method = "BH")
+#All comparisons not sig
+
+#test for homogeneity
+leveneTest(precipday ~ Season, data=precipstats)
+#not equal variances p=1.358e-05
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=<2.2e-16 so not normal
+
+kruskal.test(precipday ~ Season, data=precipstats)
+#pvalue=2.753e-05
+
+dunnTest(precipday ~ Season, data=precipstats, method="bonferroni")
 
 #average rainfall per month
 precipaverage=precipsumday %>% 
@@ -1108,8 +2205,6 @@ ggsave(path=plots, "cumulative_precip_orangecounty.png", width=6, height=6)
 #Wet season=Jan 2023-April 2023
 
 gapewet <- allgapemeta %>%
-    # filter((DateTime > '2022-05-01 00:00:00') &
-    #         (DateTime<"2022-12-31 00:00:00")) %>%
     filter((DateTime > '2022-12-31 00:00:00') &
         (DateTime<"2023-04-01 00:00:00")) %>%
   group_by(Code) %>% #do calculations by oyster code
@@ -1129,16 +2224,14 @@ gapedry <- allgapemeta %>%
   filter(binary=="1") 
 
 seasondata<- bind_rows(gapewet, gapedry, .id = 'Season')
-seasondata=season %>% 
-  mutate(set = recode(set, '1' = 'Wet', '2' = 'Dry')) %>% 
+seasondata=seasondata %>% 
+  mutate(Season = recode(Season, '1' = 'Wet', '2' = 'Dry')) %>% 
   select(-c(binary))
 
-colour_palette = c("#C9C9C9", "#999999", "#70DCBE", "#009E73", "#DC9867", "chocolate4")
-
-ggplot(seasondata, aes(Treatment, percentopen, fill=interaction(season, Treatment)))+
+ggplot(seasondata, aes(Treatment, percentopen, fill=interaction(Season, Treatment)))+
   geom_bar(position="dodge", stat="summary", fun="mean", col="black")+
   stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75, position = position_dodge(width = .9))+
-  scale_fill_manual(values = colour_palette)+
+  scale_fill_manual(values = treatment2_palette)+
   ylim(0,1)+
   theme_classic()+
   labs(y="Proportion of open valves")+
@@ -1148,12 +2241,18 @@ ggsave(path=plots, "gape_season.png", width=6, height=6)
 
 #####TREATMENT###############
 avgseasontreatment=seasondata %>% 
-  group_by(Treatment,season) %>% 
-   mutate(avgpercentopen=mean(percentopen),se=sd(percentopen)/sqrt(3))
+  group_by(Treatment,Season) %>% 
+  mutate(ntreats = n()) %>% 
+  mutate(avgpercentopen=mean(percentopen),se=sd(percentopen)/sqrt(ntreats)) 
 
-ggplot(avgseasontreatment, aes(Treatment, avgpercentopen,fill=interaction(season,Treatment))) +
+avgseasontreatnew=avgseasontreatment %>% 
+  select(-c(Site,n,percentopen)) %>% 
+  group_by(Treatment,Season,ntreats) %>% 
+  distinct(avgpercentopen,.keep_all = TRUE) #ignore treatment,n,percentopen column
+
+ggplot(avgseasontreatnew, aes(Treatment, avgpercentopen,fill=interaction(Season,Treatment))) +
   geom_col_pattern(
-    aes(pattern = season),
+    aes(pattern = Season),
     colour = "black",
     pattern_fill = "black",
     pattern_angle = 45,
@@ -1172,16 +2271,22 @@ ggplot(avgseasontreatment, aes(Treatment, avgpercentopen,fill=interaction(season
   theme(axis.text = element_text(size = 20), axis.title = element_text(size = 25),legend.title = element_text(size=25), legend.text = element_text(size=15))+
   guides(fill = "none")
 
-ggsave(path=plots, "gape_seasontreatment.png", width=6, height=6)
+ggsave(path=plots, "gape_seasontreatment.png", width=8, height=6)
 
 #####SITE###############
 avgseasonsite=seasondata %>% 
-  group_by(Site,season) %>% 
-   mutate(avgpercentopen=mean(percentopen),se=sd(percentopen)/sqrt(4))
+  group_by(Site,Season) %>% 
+  mutate(ntreats = n()) %>% 
+  mutate(avgpercentopen=mean(percentopen),se=sd(percentopen)/sqrt(ntreats)) 
 
-ggplot(avgseasonsite, aes(Site, avgpercentopen,fill=interaction(season,Site))) +
+avgseasonsitenew=avgseasonsite %>% 
+  select(-c(Treatment,n,percentopen)) %>% 
+  group_by(Site,Season,ntreats) %>% 
+  distinct(avgpercentopen,.keep_all = TRUE) #ignore treatment,n,percentopen column
+  
+ggplot(avgseasonsite, aes(Site, avgpercentopen,fill=interaction(Season,Site))) +
   geom_col_pattern(
-    aes(pattern = season),
+    aes(pattern = Season),
     colour = "black",
     pattern_fill = "black",
     pattern_angle = 45,
@@ -1200,7 +2305,7 @@ ggplot(avgseasonsite, aes(Site, avgpercentopen,fill=interaction(season,Site))) +
   theme(axis.text = element_text(size = 20), axis.title = element_text(size = 25),legend.title = element_text(size=25), legend.text = element_text(size=15))+
   guides(fill = "none")
 
-ggsave(path=plots, "gape_seasonSite.png", width=6, height=6)
+ggsave(path=plots, "gape_seasonSite.png", width=8, height=6)
 
 
 ##########Oyster v precip ############
@@ -1252,6 +2357,478 @@ ggplot(hallprecip, aes(x = DateTimeUTC)) +
 ggsave(path=plots, paste0(oy,"_precip_diff.png"), width=6, height=6)
 ```
 
+#four seasons
+```{r}
+#NAs when datetime is 00:00:00 because DateTime column has NA for those timestamps
+fourseasons=allgapemeta %>%
+      mutate(Season = case_when( #new variable
+      DateTime >= "2022-07-15 00:00:00" & DateTime <= "2022-09-30 23:59:00" ~ "Summer", #define condition for factor levels
+      DateTime >="2022-10-01 00:00:00" & DateTime <= "2022-12-31 23:59:00" ~ "Fall",
+      DateTime >= "2023-01-01 00:00:00" & DateTime <= "2023-03-31 23:59:00" ~ "Winter",
+      DateTime >= "2023-04-01 00:00:00" & DateTime <= "2023-06-19 23:59:00" ~ "Spring",
+      TRUE ~ NA)) %>% 
+  filter(!is.na(Season)) %>% #display error if a value is not assigned to one of the previous groups
+  mutate_if(is.character, as.factor) %>% 
+  mutate(Season = fct_relevel(Season,c( "Summer","Fall", "Winter", "Spring")),
+         Treatment= fct_relevel(Treatment,c("Mud","Oyster", "Eelgrass"))) %>% 
+  distinct()
+
+seasonspercentopencode=fourseasons %>% 
+  group_by(Treatment,Site,Season,Code) %>% 
+  count(binary) %>% 
+  mutate(percentopen=n/sum(n))%>% 
+  filter(binary=="1") %>% 
+  ungroup()
+
+seasonsavgsite=seasonspercentopen %>% 
+  group_by(Treatment,Season) %>% 
+  mutate(ntreats = n()) %>% 
+  mutate(avgpercentopen=mean(percentopen),se=sd(percentopen)/sqrt(ntreats)) 
+
+seasonsavgsitecode=seasonspercentopencode %>% 
+  select(-c("binary")) %>%
+  group_by(Treatment,Season,Site) %>% 
+  mutate(ntreats = n()) %>% 
+  mutate(avgpercentopen=mean(percentopen),se=sd(percentopen)/sqrt(ntreats)) 
+
+test=seasonsavgsitecode %>% 
+  select(-c("Code","n","percentopen")) %>%
+  distinct()
+
+gapeseasonavg=test %>% 
+  group_by(Season) %>% 
+  summarise(gapeavg=mean(avgpercentopen))
+
+#group by season
+ggplot(test,aes(Season,avgpercentopen,fill=Season))+
+  geom_boxplot()+
+  stat_summary(fun=mean, geom="point", shape=23, size=5, color="black", fill="red")+
+  theme_classicmodify()+
+  labs(y="Percent open (%)")+
+  scale_fill_manual(values=season_palette)+
+  theme(legend.position="none")+
+  ylim(0,1)
+
+ggsave(path=plots, "gape_fourseasons_box_gapepercent_stats.png",width=6, height=6)
+
+#avg test for stats
+seasontest=test %>% 
+  group_by(Season) %>% 
+  ntreats=sum(ntreats)
+
+# Compute the analysis of variance
+res.aov <- aov(avgpercentopen ~ Season, data=test)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=4.3e-07
+
+#tukey pairwise
+TukeyHSD(res.aov)
+#winter sig diff from fall,spring, and summer
+#All other comparisons not sig
+
+#or pairwise
+pairwise.t.test(test$avgpercentopen,test$Season,
+                 p.adjust.method = "BH")
+#winter sig diff from fall,spring, and summer
+#All other comparisons not sig
+
+#test for homogeneity
+leveneTest(avgpercentopen ~ Season, data=test)
+#equal variances p=0.4135
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals )
+#pvalue=0.1878 so normal
+
+#plot with significance indicator and make boxplots size of sample
+#group by season
+ggplot(test,aes(Season,avgpercentopen,fill=Season))+
+  geom_boxplot(vardwidth=T)+
+  stat_summary(fun=mean, geom="point", shape=23, size=5, color="black", fill="red")+
+  theme_classicmodify()+
+  labs(y="Percent open (%)")+
+  scale_fill_manual(values=season_palette)+
+  theme(legend.position="none")+
+  ylim(0,1)
+
+seasonplot=ggboxplot(test, x = "Season", y = "avgpercentopen",
+          color = "black", palette = c("#009E73","#D55E00","#56B4E9","#CC79A7"),fill="Season")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  labs(y="Proportion of open valves")+
+  geom_signif(comparisons = my_comparisons,map_signif_level = TRUE,y_position = c(0.97, 1.05, 1.10),annotation = c("****", "***","****"))+
+  stat_n_text(size=4,y.pos=1.27) + 
+  ylim(0,1.3)+
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=18),legend.text=element_text(size=12),legend.title=element_text(size=15))
+
+ggsave("percentopen_season_stats.png",path=plots,width=6, height=5)
+
+#####################
+#SITE
+# Compute the analysis of variance
+res.aov <- aov(avgpercentopen ~ Site, data=test)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.981
+
+#tukey pairwise
+TukeyHSD(res.aov)
+#All comparisons not sig
+
+#or pairwise
+pairwise.t.test(test$avgpercentopen,test$Site,
+                 p.adjust.method = "BH")
+#All comparisons not sig
+
+#test for homogeneity
+leveneTest(avgpercentopen ~ Site, data=test)
+#equal variances p=0.9023
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=0.007843 so not normal
+
+kruskal.test(avgpercentopen ~ Site, data=test)
+#pvalue=0.9882
+
+siteplot=ggboxplot(test, x = "Site", y = "avgpercentopen",
+          color = "black", palette = sitePalette,fill="Site")+
+  stat_summary(fun=mean, geom="point",shape=23, size=4, color="black", fill="red")+
+  labs(y="Proportion of open valves")+
+  #compare_means(avgpercentopen ~ Site,  data = test)+
+  #stat_compare_means(method = "anova")+
+  #stat_compare_means(label = "p.signif", method = "t.test",
+  #                   ref.group = "Winter") +
+  #stat_compare_means(comparisons = my_comparisons_site,label.y = c(1, 1.05, 1.13),aes(label = after_stat(p.signif)))+
+  stat_n_text(size=4,y.pos=1.27) + 
+  ylim(0,1.3)+
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=18),legend.text=element_text(size=12),legend.title=element_text(size=15))
+
+ggsave("percentopen_season_stats_site.png",path=plots,width=6, height=5)
+
+############
+#TREATMENT
+
+# Compute the analysis of variance
+res.aov <- aov(avgpercentopen ~ Treatment, data=test)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.561
+
+#tukey pairwise
+TukeyHSD(res.aov)
+#All comparisons not sig
+
+#or pairwise
+pairwise.t.test(test$avgpercentopen,test$Treatment,
+                 p.adjust.method = "BH")
+#All comparisons not sig
+
+#test for homogeneity
+leveneTest(avgpercentopen ~ Treatment, data=test)
+#equal variances p=0.4697
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=0.03451 so not normal
+
+kruskal.test(avgpercentopen ~ Treatment, data=test)
+#pvalue=0.4907
+
+treatplot=ggboxplot(test, x = "Treatment", y = "avgpercentopen",
+          color = "black", palette = c("chocolate4","#999999","#009E73"),fill="Treatment")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  labs(y="Proportion of open valves")+
+  #compare_means(avgpercentopen ~ Site,  data = test)+
+  #stat_compare_means(method = "anova")+
+  #stat_compare_means(label = "p.signif", method = "t.test",
+  #                   ref.group = "Winter") +
+  #stat_compare_means(comparisons = my_comparisons_site,label.y = c(1, 1.05, 1.13),aes(label = after_stat(p.signif)))+
+  stat_n_text(size=4,y.pos=1.27) + 
+  ylim(0,1.3)+
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=18),legend.text=element_text(size=12),legend.title=element_text(size=15))
+
+ggsave("percentopen_season_stats_treatment.png",path=plots,width=6, height=5)
+
+ggplot(data = test,
+       aes(x = Season, y = avgpercentopen, fill = Treatment))+
+  geom_boxplot(col="black",position=position_dodge(.9))+
+  stat_summary(position=position_dodge(.9),fun="mean", geom="point", shape=18, size=3, color="black")+
+  theme_classicmodify()+
+  labs(y="Proportion of open valves")+
+  ylim(0,1)+
+  scale_fill_manual(values=c( "chocolate4","#999999", "#009E73"))+
+  theme(legend.title=element_text(size=12),legend.text=element_text(size=12))
+
+ggsave("percentopen_season_boxplot_treat.png",path=plots,width=6, height=5)
+
+ggplot(test,aes(x = Season, y = avgpercentopen, fill = Site))+
+  geom_boxplot(col="black",position=position_dodge(.9))+
+  stat_summary(position=position_dodge(.9),fun="mean", geom="point", shape=18, size=3, color="black")+
+  theme_classicmodify()+
+  labs(y="Proportion of open valves")+
+  ylim(0,1)+
+  scale_fill_manual(values=sitePalette)+
+  theme(legend.title=element_text(size=12),legend.text=element_text(size=12))
+
+ggsave("percentopen_season_boxplot_site.png",path=plots,width=6, height=5)
+
+###################
+ggplot(seasonsavgsite,aes(Season,avgpercentopen,fill=Season))+
+  geom_bar(position="dodge", stat="summary", fun="mean",col="black")+
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  theme_classicmodify()+
+  labs(y="Proportion of open valves")+
+  scale_fill_manual(values=season_palette)+
+  theme(legend.position="none")
+
+ggsave(path=plots, "gape_fourseasons.png",width=6, height=6)
+
+ggplot(seasonsavgsite,aes(Season,avgpercentopen,fill=Season))+
+  geom_boxplot()+
+  stat_summary(fun=mean, geom="point", shape=18, size=5, color="red", fill="red")+
+  theme_classicmodify()+
+  labs(y="Proportion of open valves")+
+  scale_fill_manual(values=season_palette)+
+  theme(legend.position="none")+
+  ylim(0,1)
+
+ggsave(path=plots, "gape_fourseasons_boxplot.png",width=6, height=6)
+
+ggplot(fourseasons,aes(Season,hallpercent,fill=Season))+
+  geom_boxplot()+
+  stat_summary(fun=mean, geom="point", shape=18, size=5, color="black", fill="red")+
+  theme_classicmodify()+
+  labs(y="Percent open (%)")+
+  scale_fill_manual(values=season_palette)+
+  theme(legend.position="none")+
+  ylim(0,1)
+
+ggsave(path=plots, "gape_fourseasons_box_gapepercent.png",width=6, height=6)
+
+ggplot(seasonsavgsite,aes(Season,avgpercentopen,fill=Treatment))+
+  geom_bar(position="dodge", stat="summary", fun="mean",col="black")+
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75,position=position_dodge(.9))+
+  theme_classicmodify()+
+  labs(y="Proportion of open valves")+
+  scale_fill_manual(values=c( "chocolate4","#999999", "#009E73"))
+
+ggsave(path=plots, "gape_fourseasons_treatment.png",width=6, height=6)
+
+ggplot(seasonsavgsite,aes(Season,avgpercentopen,fill=Treatment))+
+  geom_boxplot()+
+  stat_summary(position=position_dodge(.9),fun=mean, geom="point", shape=18, size=5, color="red", fill="red")+
+  theme_classicmodify()+
+  labs(y="Proportion of open valves")+
+  scale_fill_manual(values=c( "chocolate4","#999999", "#009E73"))+
+  ylim(0,1)
+
+ggsave(path=plots, "gape_fourseasons_treat_boxplot.png",width=6, height=6)
+
+ggplot(seasonsavgsite,aes(Season,avgpercentopen,fill=Site))+
+  geom_bar(position="dodge", stat="summary", fun="mean",col="black")+
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75,position=position_dodge(.9))+
+  theme_classicmodify()+
+  labs(y="Proportion of open valves")+
+  scale_fill_manual(values=sitePalette)
+
+ggsave(path=plots, "gape_fourseasons_site.png",width=6, height=6)
+
+##########
+#oyster temp
+fourseasons %>% 
+  subset(Temp.C>0) %>% #remove the bad data
+  ggplot(aes(Season, Temp.C,fill=Season))+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  stat_compare_means(comparisons = my_comparisons,label.y = c(25, 26, 27,28,29),aes(label = after_stat(p.signif)))+
+  geom_boxplot(col="black")+
+  theme_classicmodify()+
+  scale_fill_manual(values=season_palette)+
+  labs(y="Water temp (°C)")+
+  ylim(0,30)
+
+ggsave("temp_4seasons_box.png",path=plots, width=6, height=6)
+
+
+fourseasonsbinary=fourseasons %>% 
+  filter(!is.na(binary)) %>% 
+  filter (Temp.C>0) #remove the bad data
+  
+fit <- glm(binary ~ Temp.C + factor(Season), data = fourseasonsbinary, family = binomial)
+
+fourseasons$binarynew <- predict(fit, newdata = fourseasonsbinary, type = "response")
+
+ggplot(data = fourseasonsbinary, 
+       aes(Temp.C,binarynew,group=Season)) +
+  geom_line(size = 1,aes(color=Season))+
+  scale_color_manual(values=season_palette)+
+  labs(x="Water temperature (°C)", y="Gape binary (0=closed, 1=open)")+
+  theme_classicmodify()+
+  ylim(0,1)
+  
+ggsave("seasonbinary_temp.png",path=plots,height=6, width=6)
+
+allgapemetabinary=allgapemeta %>% 
+  filter(!is.na(binary)) %>% 
+  filter (Temp.C>0) #remove the bad data
+  
+fittemp <- glm(binary ~ Temp.C, data = fourseasonsbinary, family = binomial)
+
+fourseasonsbinary$binary2 <- predict(fittemp, newdata = fourseasonsbinary, type = "response")
+
+ggplot(data = fourseasonsbinary, 
+       aes(x = Temp.C, y = binary2)) +
+  geom_line(size = 1)+
+  labs(x="Water temperature (°C)", y="Gape binary (0=closed, 1=open)")+
+  theme_classicmodify()+
+  ylim(0,1)
+
+ggsave("binary_temp.png",path=plots, width=6, height=6)
+
+##########
+#precipitation
+#find avg temp and hallpercent per month per oyster?
+
+temphallseason=fourseasons %>% 
+  group_by(DateTimeUTC = floor_date(DateTime, unit = "month")) %>% #make month column 
+  group_by(Treatment,Site,Season,DateTimeUTC,Code) %>% 
+  count(binary) %>% 
+  mutate(percentopen=n/sum(n))%>% 
+  filter(binary=="1") %>% 
+  ungroup()
+
+temphallseasonday=fourseasons %>% 
+  group_by(DateTimeUTC = floor_date(DateTime, unit = "day")) %>% #make month column 
+  group_by(Treatment,Site,Season,DateTimeUTC,Code) %>% 
+  count(binary) %>% 
+  mutate(percentopen=n/sum(n))%>% 
+  filter(binary=="1") %>% 
+  ungroup()
+
+temphallseasonprecip=temphallseasonday %>% 
+  group_by(DateTimeUTC) %>% 
+  summarise(meanpercentopen=mean(percentopen))
+  
+temphallseasonprecip=merge(temphallseasonprecip,precipsumday,by="DateTimeUTC")
+
+
+# ggplot(temphallseasonprecip,aes(precipday,percentopen))+
+#   geom_point()+
+#   geom_smooth()+
+#   theme_classicmodify()+
+#   labs(y="Proportion of open valves",x="Daily rainfall (mm)")
+# 
+# ggsave("precip_prop_open.png",path=plots, height=6, width=6)
+
+coeff=55
+
+ggplot(temphallseasonprecip, aes(x=DateTimeUTC)) +
+  geom_bar(aes(y=precipday/coeff), stat="summary",position="dodge",fun="sum", size=1, color="blue", alpha=.4) + 
+  geom_line(aes(y=meanpercentopen), size=1,alpha=0.6) +
+  scale_y_continuous(
+    # Features of the first axis
+    name = "Proportion of open valves",
+    # Add a second axis and specify its features
+    sec.axis = sec_axis(~.*coeff, name="Precipitation (mm)"))+
+  theme_classicmodifygrid()+
+    theme(
+    axis.title.y = element_text(color = "black"),
+    axis.title.y.right = element_text(color = "blue")) 
+
+ggsave("precip_prop_open.png",path=plots, dpi = 500, width = 9, height = 4, units = "in")
+
+coeff=55
+
+ggplot(temphallseasonprecip, aes(x=DateTimeUTC)) +
+  geom_line(aes(y=meanpercentopen), size=2,alpha=0.6) +
+  geom_bar(aes(y=precipday/coeff), stat="summary",position="dodge",fun="sum", size=1, color="blue", fill="blue",alpha=.4) + 
+  scale_y_continuous(
+    # Features of the first axis
+    name = "Proportion of open valves",
+    # Add a second axis and specify its features
+    sec.axis = sec_axis(~.*coeff, name="Precipitation (mm)"))+
+  theme_classicmodify()+
+    theme(
+    axis.title.y = element_text(color = "black"),
+    axis.title.y.right = element_text(color = "blue")) +
+  scale_x_datetime(limits = as.POSIXct(strptime(c("2023-01-01 00:00:00", "2023-04-01 00:00:00"), 
+                   format = "%Y-%m-%d %H:%M")))
+
+ggsave("precip_prop_open_zoom.png",path=plots, height=6, width=6)
+
+###########################
+#combined prop of open valves plots
+
+figure=ggarrange(seasonplot+
+                   theme(
+                  axis.title.y = element_blank(),
+                  legend.position="none"), 
+           treatplot+ 
+            theme(axis.text.y = element_blank(),
+                  axis.ticks.y = element_blank(),
+                  axis.title.y = element_blank(),
+                  legend.position="none"), 
+          siteplot+ 
+            theme(axis.text.y = element_blank(),
+                  axis.ticks.y = element_blank(),
+                  axis.title.y = element_blank(),
+                  legend.position="none") , nrow=1, ncol=3)
+
+figure=annotate_figure(figure, left = textGrob("Proportion of open valves", rot = 90, vjust = 1, gp = gpar(cex = 1.5)))
+figure
+ggsave(plot=figure,"propgape_seatreatsite.png",path=plots,height=4, width=9)
+#ggexport(figure, filename = "figure2.png",path=plots,dpi = 600, width = 800, height = 600, units = "in")
+
+seasonplot=ggboxplot(test, x = "Season", y = "avgpercentopen",
+          color = "black", palette = c("#009E73","#D55E00","#56B4E9","#CC79A7"),fill="Season")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  labs(y="Proportion of open valves",tag = "A")+
+  stat_compare_means(comparisons = my_comparisons,label.y = c(0.97, 1.06, 1.10),aes(label = after_stat(p.signif)))+
+  stat_n_text(size=4,y.pos=1.27) + 
+  ylim(0,1.3)+
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=18),legend.position="none")
+
+treatplot=ggboxplot(test, x = "Treatment", y = "avgpercentopen",
+          color = "black", palette = c("chocolate4","#999999","#009E73"),fill="Treatment")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  labs(y="Proportion of open valves",tag = "B")+
+  stat_n_text(size=4,y.pos=1.27) + 
+  ylim(0,1.3)+
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=18),legend.position="none")
+
+siteplot=ggboxplot(test, x = "Site", y = "avgpercentopen",
+          color = "black", palette = sitePalette,fill="Site")+
+  stat_summary(fun=mean, geom="point",shape=23, size=4, color="black", fill="red")+
+  labs(y="Proportion of open valves",tag = "C")+
+  stat_n_text(size=4,y.pos=1.27) + 
+  ylim(0,1.3)+
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=18),legend.position="none")
+```
+
 #calculate 1 percent closed value for each code, graph and glm
 ```{r}
 #calculate percent closed column 
@@ -1259,8 +2836,7 @@ allgapemetapercentopen=as.data.frame(allgapemeta %>%
   group_by(Code, binary) %>% 
   summarise(n = n(), 
             Treatment=unique(Treatment), #keep treatment 
-            Site=unique(Site), 
-            Died=unique(Died)) %>%     #keep site
+            Site=unique(Site)) %>%     #keep site
   mutate(percentopen = n/sum(n)) %>% 
   dplyr::filter(binary=="1") %>% 
   ungroup () 
@@ -1269,25 +2845,54 @@ allgapemetapercentopen=as.data.frame(allgapemeta %>%
 #graph? eelgrass closed most, then oyster, then mud
 ggplot(allgapemetapercentopen, aes(Treatment, percentopen))+
   geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
-  stat_summary(fun.data = mean_cl_boot, geom = "errorbar", width = 0.2, size = 0.75)+
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
   ylim(0,1)+
   theme_classic()+
   labs(y="Proportion of open valves")+
   theme(axis.text = element_text(size = 20), axis.title = element_text(size = 30))
 
-ggsave("proportion_open_treatment.png", width=6, height=6)
+ggsave("proportion_open_treatment.png", width=6, height=5,path=plots)
 
-percentopenmodel=glm(log(percentopen)~Treatment, data=allgapemetapercentopen, family="binomial")
+allgapemetapercentopen$Treatment=as.factor(allgapemetapercentopen$Treatment)
+allgapemetapercentopen$percentopen=as.integer(allgapemetapercentopen$percentopen)
+
+shapiro.test(allgapemetapercentopen$percentopen)
+#not normal 
+
+#check if equal variances
+leveneTest(percentopen~Treatment, allgapemetapercentopen)
+#p=0.66553 equal variances
+
+percentopenmodel=aov(log(percentopen)~Treatment, data=allgapemetapercentopen)
 
 summary(percentopenmodel)
 #not significantly different
+#p=0.481
 
-#look at percent open data. Still not sig
-percentopenmodel=glm(percentopen~Treatment, data=allgapemetapercentclosed, family="binomial")
+ggplot(allgapemetapercentopen, aes(Site, percentopen))+
+  geom_bar(position="dodge", stat="summary", fun="mean", fill=sitePalette, col="black")+
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  ylim(0,1)+
+  theme_classic()+
+  labs(y="Proportion of open valves")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 30))
+
+ggsave("proportion_open_site.png", path=plots, width=6, height=5)
+
+allgapemetapercentopen$Site=as.factor(allgapemetapercentopen$Site)
+
+shapiro.test(allgapemetapercentopen$percentopen)
+#not normal 
+
+#check if equal variances
+leveneTest(percentopen~Site, allgapemetapercentopen)
+#p=0.69257 equal variances
+
+percentopenmodel=aov(log(percentopen)~Site, data=allgapemetapercentopen)
 
 summary(percentopenmodel)
-#same
-
+#not significantly different
+#p=0.464
 ```
 
 #tides
@@ -1350,6 +2955,52 @@ ggsave(path=plots, "D.M.2.1047_tides.png", width=6, height=6)
 
 #temp
 ```{r}
+#temp vs gapepercent
+allgapemeta %>% 
+  filter(Temp.C>0) %>% #remove the bad data
+  ggplot(aes(Temp.C, hallpercent))+
+  geom_smooth(se=T)+
+  labs(x="Oyster temperature (°C)",y="Percent gaping (%)")+
+  theme_classicmodify()+
+  ylim(0,100)
+
+ggsave("hallpercent_temp.png",path=plots,height=6, width=6)
+
+allgapemeta %>% 
+  filter(Temp.C>0) %>% #remove the bad data
+  ggplot(aes(Temp.C, hallpercent,col=Treatment))+
+  geom_smooth(se=T)+
+  scale_color_manual(values=treatment_palette)+
+  labs(x="Oyster temperature (°C)",y="Percent gaping (%)")+
+  theme_classicmodify()+
+  ylim(0,100)
+
+ggsave("hallpercent_temp_treat.png",path=plots,height=6, width=6)
+
+allgapemeta %>% 
+  filter(Temp.C>0) %>% #remove the bad data
+  ggplot(aes(Temp.C, hallpercent,col=Site))+
+  geom_smooth(se=T)+
+  scale_color_manual(values=sitePalette)+
+  labs(x="Oyster temperature (°C)",y="Percent gaping (%)")+
+  theme_classicmodify()+
+  ylim(0,100)
+
+ggsave("hallpercent_temp_site.png",path=plots,height=6, width=6)
+
+allgapemeta %>% 
+  filter(!is.na(binary)) %>% 
+  filter(Temp.C>0) %>% #remove the bad data
+ # mutate_at("binary", as.factor) %>% 
+  ggplot(aes(Temp.C,binary))+
+    geom_point() +
+     stat_smooth(method="glm", color="blue", se=FALSE,
+                 method.args = list(family=binomial))+
+  labs(x="Water temperature (°C)", y="Gape binary (0=closed, 1=open)")+
+  theme_classicmodify()
+
+ggsave("binary_temp.png",path=plots, width=6, height=6)
+
 halltemp=loadComboGape('D.M.2.1047')
 
 max_first  <- max(halltemp$hallpercent,na.rm=T)   # Specify max of first y axis
@@ -1363,9 +3014,9 @@ shift = min_first - min_second
 
 ggplot(halltemp, aes(x = DateTime, y = hallpercent)) +
   geom_line(aes(color="Gape opening %")) +
-  geom_line(aes(y = inv_scale_function(Temp.C,scale,shift), color = "Temp (C)")) +
+  geom_line(aes(y = inv_scale_function(Temp.C,scale,shift), color = "Temp (°C)")) +
   #scale_x_continuous(breaks = seq(0, 336, 24)) +
-  scale_y_continuous(limits = c(min_first, max_first), sec.axis = sec_axis(~scale_function(., scale, shift), name="Temp (C)")) +
+  scale_y_continuous(limits = c(min_first, max_first), sec.axis = sec_axis(~scale_function(., scale, shift), name="Temp (°C)")) +
   labs(x = "Date", y = "Gape opening %", color = "") +
   scale_color_manual(values = c("black", "red"))+
   theme_classic()
@@ -1375,14 +3026,14 @@ ggsave(path=plots, "D.M.2.1047_temp.png", width=6, height=6)
 
 ########### Temp across treatments/sites ##############
 ggplot(allgapemeta, aes(Treatment,Temp.C))+
-  geom_boxplot()+
+  geom_boxplot(col="black", fill=treatment_palette)+
   scale_y_continuous(limits = c(0, 30))+
   theme_classic()
 
-ggsave(path=plots, "Temp vs treatments.png",width=6, height=6)
+ggsave(path=plots, "Temp_vs_treatments.png",width=6, height=6)
 
 ggplot(allgapemeta, aes(Site,Temp.C))+
-  geom_boxplot()+
+  geom_boxplot(col="black",fill=sitePalette)+
   scale_y_continuous(limits = c(0, 30))+
   theme_classic()
 
@@ -1424,10 +3075,231 @@ ggplot(tempseason, aes(Site,Temp.C, fill=Season))+
 
 ggsave(path=plots, "Temp_vs_season_site.png", width=6, height=6)
 
+#############Temp vs gape across months ############
+#average by site and treatment to get average %open/closed for each oyster in each site/treatment
+#graph months on x axis, with bars of %open, with line of temp running across. May need to use temp from precip instead of sensor 
+
+gapebinarytemp <- allgapemeta %>%
+  group_by(Code) %>% #do calculations by oyster code
+  group_by(day = floor_date(DateTime, unit = "day")) %>% #
+  drop_na(binary) %>% 
+  group_by(Code,day,Site,Treatment) %>% 
+  count(binary) %>% 
+  mutate(percentopen=n/sum(n)) %>% 
+  subset(binary == '1')
+
+#make a column the averages days for precip
+precipday<-precip %>% 
+  mutate(day = floor_date(DateTimeUTC, "day")) %>%
+  group_by(day) %>%
+  summarize(Dailytemp = mean(AirTempC))
+
+gapebinarytemp1 <- left_join(gapebinarytemp, precipday, by=c("day"))
+
+ggplot(gapebinarytemp1, aes(day, percentopen))+
+  geom_point()+
+  geom_point(y=gapebinarytemp1$Dailytemp, col="red")
+
+max_first  <- max(gapebinarytemp1$percentopen,na.rm=T)   # Specify max of first y axis
+max_second <- max(gapebinarytemp1$Dailytemp,na.rm=T) # Specify max of second y axis
+min_first  <- min(gapebinarytemp1$percentopen, na.rm=T)   # Specify min of first y axis
+min_second <- min(gapebinarytemp1$Dailytemp,na.rm=T) # Specify min of second y axis
+
+# scale and shift variables calculated based on desired mins and maxes
+scale = (max_second - min_second)/(max_first - min_first)
+shift = min_first - min_second
+
+ggplot(gapebinarytemp1, aes(x = day, y = percentopen)) +
+  geom_line(aes(color="Gape opening %")) +
+  geom_smooth(color="red")+
+  geom_point(aes(y = inv_scale_function(Dailytemp,scale,shift), color = "Daily temp (°C)")) +
+  scale_y_continuous(limits = c(min_first, max_first), sec.axis = sec_axis(~scale_function(., scale, shift), name="Daily temp (°C)")) +
+  labs(x = "Date", y = "Fraction of oyster gaping %", color = "") +
+  scale_color_manual(values = c("blue", "black"))+
+  theme_classic()
+
+ggsave(path=plots, "gape_vs_temp.png",width=6, height=6)
+
+gapetemp <- allgapemeta %>%
+  group_by(day = floor_date(DateTime, unit = "day")) %>% #
+  drop_na(binary) %>% 
+  group_by(day,Site,Treatment) %>% 
+  count(binary) %>% 
+  mutate(percentopen=n/sum(n)) %>% 
+  subset(binary == '1')
+
+gapebinarytemp2<- left_join(gapetemp, precipday, by=c("day"))
+
+ggplot(gapebinarytemp2, aes(x = day, y = percentopen)) +
+  geom_line(aes(color="Gape opening %")) +
+  geom_smooth(color="red")+
+  geom_point(aes(y = inv_scale_function(Dailytemp,scale,shift), color = "Daily temp (°C)")) +
+  scale_y_continuous(limits = c(min_first, max_first), sec.axis = sec_axis(~scale_function(., scale, shift), name="Daily temp (°C)")) +
+  labs(x = "Date", y = "Gape opening %", color = "") +
+  scale_color_manual(values = c("blue", "black"))+
+  theme_classic()
 ```
 
-#plot field deaths by site or treatment
+#air temp vs oyster temp
 ```{r}
+#combine precip53sub and allgapemeta
+
+# #pull out 53 from hightidetemp (oyster temps only at high tide)
+# hightidetemp53 <- subset(hightidetemp, format(hightidetemp$DateTime, "%M") %in% c('53'))
+
+precip$DateTime=precip$DateTimeUTC
+
+airoytemp=merge(precip[,c("DateTime","AirTempC")],hightidetemp[,c("DateTime","Temp.C")], by="DateTime")
+
+coeff=1
+
+#D.E.1032 low temps in September
+
+airoytemp %>% 
+  subset(Temp.C>0) %>% #remove the bad data
+  filter(!row_number() %in% c(1661,1667,1671,1677,1689,1540,1662,1650,1622)) %>% 
+ggplot(aes(x=DateTime)) +
+  geom_line(aes(y=AirTempC), size=2,alpha=0.6) +
+  geom_line(aes(y=Temp.C), size=1, color="red", alpha=.4) + 
+  scale_y_continuous(
+    # Features of the first axis
+    name = "Air Temperature (°C)",
+    # Add a second axis and specify its features
+    sec.axis = sec_axis(~.*coeff, name="Oyster temperature (°C)"))+
+  theme_classicmodify()+
+    theme(
+    axis.title.y = element_text(color = "black"),
+    axis.title.y.right = element_text(color = "red")) 
+
+ggsave("air_lowtideoy_temp.png",path=plots, height=6, width=6)
+
+airoytemp %>% 
+  subset(Temp.C>0) %>% #remove the bad data
+ggplot(aes(x=AirTempC,y=Temp.C)) +
+  geom_point() +
+  geom_smooth()+
+  theme_classicmodify()+
+  labs(x="Air Temp (°C)", y="Oyster Temp (°C)")
+
+ggsave("air_oy_temp_correlation.png",path=plots, height=6, width=6)
+
+airoytempseason=airoytemp %>%
+      mutate(Season = case_when( #new variable
+      DateTime >= "2022-07-15 00:00:00" & DateTime <= "2022-09-30 23:59:00" ~ "Summer", #define condition for factor levels
+      DateTime >="2022-10-01 00:00:00" & DateTime <= "2022-12-31 23:59:00" ~ "Fall",
+      DateTime >= "2023-01-01 00:00:00" & DateTime <= "2023-03-31 23:59:00" ~ "Winter",
+      DateTime >= "2023-04-01 00:00:00" & DateTime <= "2023-06-19 23:59:00" ~ "Spring",
+      TRUE ~ NA)) %>% 
+  filter(!is.na(Season)) %>% #display error if a value is not assigned to one of the previous groups
+  mutate_if(is.character, as.factor) %>% 
+  mutate(Season = fct_relevel(Season,c("Summer", "Fall", "Winter", "Spring")))
+
+airoytemplong=airoytempseason %>% 
+  pivot_longer(cols=c('AirTempC', 'Temp.C'),
+                    names_to='Temp_type',
+                    values_to='Temp') %>% 
+  distinct() %>% 
+  group_by(DateTime,Temp_type,Season) %>% 
+  summarise_all(mean)
+
+airoytemplong$Temp_type=recode_factor(airoytemplong$Temp_type, AirTempC = "Air Temp (°C)", 
+                                Temp.C = "Oyster Temp (°C)")
+
+ggplot(airoytemplong,aes(Season, Temp,fill=Temp_type))+
+  geom_bar(stat="summary",position="dodge",fun="mean",col="black")+
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75,position=position_dodge(.9))+
+  theme_classicmodify()+
+  scale_fill_manual(values=season_palette)+
+  labs(y="Temperature (°C)")
+
+ggsave("air_oy_temp_season.png",path=plots,height=6, width=6)
+  
+
+tempday=airoytemp %>%
+    group_by(DateTime = floor_date(DateTime, unit = "day")) %>%
+  summarise(temp_day_mean = mean(Temp.C, na.rm=T),
+            sd = sd(Temp.C, na.rm=T),
+            n = n())
+
+tempdayseason=tempday %>%
+      mutate(Season = case_when( #new variable
+      DateTime >= "2022-07-15 00:00:00" & DateTime <= "2022-09-30 23:59:00" ~ "Summer", #define condition for factor levels
+      DateTime >="2022-10-01 00:00:00" & DateTime <= "2022-12-31 23:59:00" ~ "Fall",
+      DateTime >= "2023-01-01 00:00:00" & DateTime <= "2023-03-31 23:59:00" ~ "Winter",
+      DateTime >= "2023-04-01 00:00:00" & DateTime <= "2023-06-19 23:59:00" ~ "Spring",
+      TRUE ~ NA)) %>% 
+  filter(!is.na(Season)) %>% #display error if a value is not assigned to one of the previous groups
+  mutate_if(is.character, as.factor) %>% 
+  mutate(Season = fct_relevel(Season,c("Summer","Fall", "Winter", "Spring")))
+
+dailywatertempplot=ggplot(tempdayseason,aes(Season, temp_day_mean,fill=Season))+
+    geom_boxplot()+
+  #geom_bar(stat="summary",position="dodge",fun="mean",col="black")+
+  #stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75,position=position_dodge(.9))+
+  theme_classicmodify()+
+  theme(legend.position = "none")+
+  scale_fill_manual(values=season_palette)+
+  labs(y="Average daily water temperature (°C)") +
+  stat_n_text(size=5,y.pos=35) +
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+stat_compare_means(comparisons = my_comparisons_season,label.y = c(25, 26.5, 28,29.5,31,32.5),aes(label = after_stat(p.signif)))
+
+# Compute the analysis of variance
+res.aov <- aov(temp_day_mean ~ Season, data=tempdayseason)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=<2e-16
+
+#tukey pairwise
+TukeyHSD(res.aov)
+#All comparisons sig except spring/fall
+
+#or pairwise
+pairwise.t.test(tempdayseason$temp_day_mean,tempdayseason$Season,
+                 p.adjust.method = "BH")
+#All comparisons not sig
+
+#test for homogeneity
+leveneTest(temp_day_mean ~ Season, data=tempdayseason)
+#not equal variances p=0.8861
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=0.00306 so not normal
+
+kruskal.test(temp_day_mean ~ Season, data=tempdayseason)
+#pvalue=0.8687
+
+
+precip53season=precip53sub %>%
+      mutate(Season = case_when( #new variable
+      DateTime >= "2022-07-15 00:00:00" & DateTime <= "2022-09-30 23:59:00" ~ "Summer", #define condition for factor levels
+      DateTime >="2022-10-01 00:00:00" & DateTime <= "2022-12-31 23:59:00" ~ "Fall",
+      DateTime >= "2023-01-01 00:00:00" & DateTime <= "2023-03-31 23:59:00" ~ "Winter",
+      DateTime >= "2023-04-01 00:00:00" & DateTime <= "2023-06-19 23:59:00" ~ "Spring",
+      TRUE ~ NA)) %>% 
+  filter(!is.na(Season)) %>% #display error if a value is not assigned to one of the previous groups
+  mutate_if(is.character, as.factor) %>% 
+  mutate(Season = fct_relevel(Season,c("Summer","Fall", "Winter", "Spring")))
+
+  ggplot(precip53season,aes(Season, AirTempC,fill=Season))+
+  geom_bar(stat="summary",position="dodge",fun="mean",col="black")+
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75,position=position_dodge(.9))+
+  theme_classicmodify()+
+  scale_fill_manual(values=season_palette)+
+  labs(y="Air temp (°C)")
+   
+```
+
+#death
+```{r}
+#############Death vs Treatment and Site ################
 yesdead<-metafile %>%
   group_by(Site, Treatment, Fielddeath) %>% 
   summarise(n=n()) %>% 
@@ -1435,27 +3307,515 @@ yesdead<-metafile %>%
   mutate(prop=n/sum(n)) %>% 
   filter(Fielddeath %in% "Yes") 
 
-yesdeadtreatment<-yesdead %>% 
-  group_by(Treatment) %>% 
+ggplot(yesdead, aes(Treatment, n))+
+  geom_bar(position="dodge", stat="summary",fun="mean",fill=c("#999999", "#009E73", "chocolate4"), col="black")+
+  #stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  labs(y="Number of field deaths")+
+  theme_classic()+
+  ylim(0,5)
+
+ggplot(deathseasons, aes(Treatment,n))+
+  geom_col(col="black")+
+  #stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  labs(y="Number of field deaths")+
+  theme_classic()
+  #ylim(0,5)
+
+ggsave(path=plots, "Field_deaths_treatment.png", width=6, height=6)
+
+ggplot(yesdead, aes(Site, n))+
+  geom_bar(position="dodge", stat="summary", fun="mean",fill=sitePalette,col="black")+
+ # stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  labs(y="Number of field deaths")+
+  theme_classic()+
+   ylim(0,5)
+ggsave(path=plots, "Field_deaths_site.png", width=6, height=6)
+
+# Compute the analysis of variance
+res.aov <- aov(n ~ Treatment, data=yesdead)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.751
+
+#tukey pairwise
+TukeyHSD(res.aov)
+#All comparisons not sig
+
+#or pairwise
+pairwise.t.test(test$avgpercentopen,test$Treatment,
+                 p.adjust.method = "BH")
+#All comparisons not sig
+
+#test for homogeneity
+leveneTest(n ~ Treatment, data=yesdead)
+#equal variances p=0.2279
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=0.2777 so normal
+
+
+#####################################
+#death vs site
+# Compute the analysis of variance
+res.aov <- aov(n ~ Site, data=yesdead)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.751
+
+#test for homogeneity
+leveneTest(n ~ Site, data=yesdead)
+#equal variances p=0.2279
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=0.2777 so normal
+
+################ Death vs 4 seasons ######################
+deathseasons=metafile %>%
+      mutate(Season = case_when( #new variable
+      timeofdeath >= "2022-07-15 00:00:00" & timeofdeath <= "2022-09-30 23:59:00" ~ "Summer", #define condition for factor levels
+      timeofdeath >="2022-10-01 00:00:00" & timeofdeath <= "2022-12-31 23:59:00" ~ "Fall",
+      timeofdeath >= "2023-01-01 00:00:00" & timeofdeath <= "2023-03-31 23:59:00" ~ "Winter",
+      timeofdeath >= "2023-04-01 00:00:00" & timeofdeath <= "2023-06-19 23:59:00" ~ "Spring",
+      TRUE ~ NA)) %>% 
+  filter(!is.na(Season)) %>% #display error if a value is not assigned to one of the previous groups
+  mutate_if(is.character, as.factor) %>% 
+  mutate(Season = fct_relevel(Season,c( "Summer","Fall", "Winter", "Spring")),
+         Treatment= fct_relevel(Treatment,c("Mud","Oyster", "Eelgrass"))) %>% 
+  distinct() %>% 
+  ungroup() %>% 
+  group_by(Site, Treatment, Fielddeath,Season) %>% 
+  summarise(n=n())
+
+deathseasongraph=deathseasons %>% 
+  group_by(Season) %>% 
   summarise(n=sum(n))
 
-yesdeadsite<-yesdead %>% 
+deathseason=ggplot(deathseasongraph, aes(Season, n))+
+  geom_bar(position="dodge", stat="summary", fun="mean", fill=season_palette, col="black")+
+  #stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  labs(y="Number of field deaths")+
+  theme_classic()+
+  ylim(0,18)
+
+res.aov <- aov(n ~ Season, data=deathseasons)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.646
+
+#test for homogeneity
+leveneTest(n ~ Season, data=deathseasons)
+#equal variances p=0.6465
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=0.00001963 so not normal
+
+kruskal.test(n ~ Season, data=deathseasons)
+#pvalue=0.06089
+
+#######################
+#####Death by site
+
+deathsitegraph=deathseasons %>% 
   group_by(Site) %>% 
   summarise(n=sum(n))
 
-esquisse::esquisser()
+deathsite=ggplot(deathsitegraph, aes(Site, n))+
+  geom_bar(position="dodge", stat="summary", fun="mean", fill=sitePalette, col="black")+
+  #stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  labs(y="Number of field deaths")+
+  theme_classic()+
+  ylim(0,18)
 
-ggplot(yesdeadtreatment, aes(Treatment, n))+
-  geom_bar(position="dodge", stat="summary", fun="mean", fill=c("#999999", "#009E73", "chocolate4"), col="black")+
-  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
-  labs(y="Number of field deaths")
-ggsave(path=plots, "Field_deaths_treatment.png", width=6, height=6)
+res.aov <- aov(n ~ Site, data=deathseasons)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.646
 
-ggplot(yesdeadsite, aes(Site, n))+
-  geom_bar(position="dodge", stat="summary", fun="mean")+
-  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
-  labs(y="Number of field deaths")
-ggsave(path=plots, "Field_deaths_site.png", width=6, height=6)
+#test for homogeneity
+leveneTest(n ~ Site, data=deathseasons)
+#equal variances p=0.6465
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=0.00001963 so not normal
+
+kruskal.test(n ~ Site, data=deathseasons)
+#pvalue=0.06089
+
+#######################
+#####Death by treatment
+
+deathtreatgraph=deathseasons %>% 
+  group_by(Treatment) %>% 
+  summarise(n=sum(n))
+
+deathtreat=ggplot(deathtreatgraph, aes(Treatment, n))+
+  geom_bar(stat="identity", fill=treatment_palette, col="black")+
+  labs(y="Number of field deaths")+
+  theme_classic()+
+  ylim(0,18)
+
+res.aov <- aov(n ~ Treatment, data=deathseasons)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.646
+
+#test for homogeneity
+leveneTest(n ~ Treatment, data=deathseasons)
+#equal variances p=0.6465
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=0.00001963 so not normal
+
+kruskal.test(n ~ Treatment, data=deathseasons)
+#pvalue=0.06089
+
+figure=ggarrange(deathseason+
+                   theme(
+                  axis.title.y = element_blank() ), 
+           deathtreat+ 
+            theme(axis.text.y = element_blank(),
+                  axis.ticks.y = element_blank(),
+                  axis.title.y = element_blank() ), 
+          deathsite+ 
+            theme(axis.text.y = element_blank(),
+                  axis.ticks.y = element_blank(),
+                  axis.title.y = element_blank() ) , nrow=1, ncol=3)
+
+figure=annotate_figure(figure, left = textGrob("Number of field deaths", rot = 90, vjust = 1, gp = gpar(cex = 1.25)))
+figure
+
+ggsave(plot=figure,"deaths_seatreatsite.png",path=plots,height=4.3, width=9)
+
+#merge countseason and deathseasons
+countseason$count=countseason$n
+
+propdeath=merge(countseason,deathseasons, by=c("Site","Treatment","Season"), all = TRUE)
+propdeath[is.na(propdeath)] <- 0
+
+propdeath=propdeath %>% 
+  group_by(Treatment, Site, Season) %>% 
+  #select(-c(n.x, Fielddeath)) %>% 
+  filter(count != 0) %>% 
+  mutate(propdeath=n.y/count)
+
+propdeathseas=propdeath %>% 
+  group_by(Season) %>% 
+  #select(-c(n.x, Fielddeath)) 
+  mutate(sumdeath=sum(n.y),
+         sumcount=sum(count),
+        propdeath=sumdeath/sumcount)%>% 
+  select(-c(Site, Treatment,count,n.y)) %>% 
+  distinct()
+
+propdeathseasplot=ggplot(propdeathseas, aes(Season, propdeath))+
+  geom_bar(stat="identity", fill=season_palette, col="black")+
+  labs(y="Number of field deaths proportional to number of oysters deployed",tag = "A")+
+  ylim(0,1)+
+  theme_classic()
+  
+propdeathtreat=propdeath %>% 
+  group_by(Treatment) %>% 
+  #select(-c(n.x, Fielddeath)) 
+  mutate(sumdeath=sum(n.y),
+         sumcount=sum(count),
+        propdeath=sumdeath/sumcount)%>% 
+  select(-c(Site, Season,count,n.y)) %>% 
+  distinct()
+
+propdeathtreatplot=ggplot(propdeathtreat, aes(Treatment, propdeath))+
+  geom_bar(stat="identity", fill=treatment_palette, col="black")+
+  labs(y="Number of field deaths proportional to number of oysters deployed",tag = "B")+
+  ylim(0,1)+
+  theme_classic()
+
+propdeathsite=propdeath %>% 
+  group_by(Site) %>% 
+  #select(-c(n.x, Fielddeath)) 
+  mutate(sumdeath=sum(n.y),
+         sumcount=sum(count),
+        propdeath=sumdeath/sumcount)%>% 
+  select(-c(Treatment, Season,count,n.y)) %>% 
+  distinct()
+
+propdeathsiteplot=ggplot(propdeathsite, aes(Site, propdeath))+
+  geom_bar(stat="identity", fill=sitePalette, col="black")+
+  labs(y="Number of field deaths proportional to number of oysters deployed",tag = "C")+
+  ylim(0,1)+
+  theme_classic()
+
+figure=ggarrange(propdeathseasplot+
+                   theme(
+                  axis.title.y = element_blank() ), 
+           propdeathtreatplot+ 
+            theme(axis.text.y = element_blank(),
+                  axis.ticks.y = element_blank(),
+                  axis.title.y = element_blank() ), 
+          propdeathsiteplot+ 
+            theme(axis.text.y = element_blank(),
+                  axis.ticks.y = element_blank(),
+                  axis.title.y = element_blank() ) , nrow=1, ncol=3)
+
+figure=annotate_figure(figure, left = textGrob("Number of field deaths proportional to number of oysters deployed", rot = 90, vjust = 1, gp = gpar(cex = 0.8)))
+figure
+
+ggsave(plot=figure,"deaths_prop_seatreatsite.png",path=plots,height=4.3, width=9)
+
+################################
+#stats
+  
+
+res.aov <- aov(propdeath ~ Treatment, data=propdeath)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.646
+
+#test for homogeneity
+leveneTest(propdeath ~ Treatment, data=propdeath)
+#equal variances p=0.6465
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=0.00001963 so not normal
+
+kruskal.test(propdeath ~ Treatment, data=propdeath)
+#pvalue=0.06089
+
+res.aov <- aov(propdeath ~ Season, data=propdeath)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.646
+
+#test for homogeneity
+leveneTest(propdeath ~ Season, data=propdeath)
+#equal variances p=0.6465
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=0.00001963 so not normal
+
+kruskal.test(propdeath ~ Season, data=propdeath)
+#pvalue=0.06089
+
+res.aov <- aov(propdeath ~ Site, data=propdeath)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.646
+
+#test for homogeneity
+leveneTest(propdeath ~Site, data=propdeath)
+#equal variances p=0.6465
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=0.00001963 so not normal
+
+kruskal.test(propdeath ~ Site, data=propdeath)
+#pvalue=0.06089
+```
+
+#number of oysters out during seasons
+```{r}
+countseason=metafile %>%
+      mutate(Season = case_when( #new variable
+      StartIncludeUTC >= "2022-07-15 00:00:00" & StartIncludeUTC <= "2022-09-30 23:59:00" ~ "Summer", #define condition for factor levels
+      StartIncludeUTC >="2022-10-01 00:00:00" & StartIncludeUTC <= "2022-12-31 23:59:00" ~ "Fall",
+      StartIncludeUTC >= "2023-01-01 00:00:00" & StartIncludeUTC <= "2023-03-31 23:59:00" ~ "Winter",
+      StartIncludeUTC >= "2023-04-01 00:00:00" & StartIncludeUTC <= "2023-06-19 23:59:00" ~ "Spring",
+      TRUE ~ NA)) %>% 
+  filter(!is.na(Season)) %>% #display error if a value is not assigned to one of the previous groups
+  mutate_if(is.character, as.factor) %>% 
+  mutate(Season = fct_relevel(Season,c( "Summer","Fall", "Winter", "Spring")),
+         Treatment= fct_relevel(Treatment,c("Mud","Oyster", "Eelgrass"))) %>% 
+  distinct() %>% 
+  ungroup() %>% 
+  group_by(Site, Treatment, Season) %>% 
+  summarise(n=n())
+
+countseasongraph=countseason %>% 
+  group_by(Season) %>% 
+  summarise(n=sum(n))
+
+countseason=ggplot(countseasongraph, aes(Season, n))+
+  geom_bar(position="dodge", stat="summary", fun="mean", fill=season_palette, col="black")+
+  theme_classicmodify()+
+  labs(y="Number of oysters deployed",tag = "A")+
+  ylim(0,65)
+
+countsitegraph=countseason %>% 
+  group_by(Site) %>% 
+  summarise(n=sum(n))
+
+countsite=ggplot(countsitegraph, aes(Site, n))+
+  geom_bar(position="dodge", stat="summary", fun="mean", fill=sitePalette, col="black")+
+  theme_classicmodify()+
+  labs(y="Number of oysters deployed",tag = "C")+
+  ylim(0,65)
+
+counttreatgraph=countseason %>% 
+  group_by(Treatment) %>% 
+  summarise(n=sum(n))
+
+counttreat=ggplot(counttreatgraph, aes(Treatment, n))+
+  geom_bar(position="dodge", stat="summary", fun="mean", fill=treatment_palette, col="black")+
+  theme_classicmodify()+
+  labs(y="Number of oysters deployed",tag = "B")+
+  ylim(0,65)
+
+figure=ggarrange(countseason+
+                   theme(
+                  axis.title.y = element_blank(),
+                  axis.text.x=element_text(size=11)), 
+           counttreat+ 
+            theme(axis.text.y = element_blank(),
+                  axis.ticks.y = element_blank(),
+                  axis.title.y = element_blank(),
+                  axis.text.x=element_text(size=11)), 
+          countsite+ 
+            theme(axis.text.y = element_blank(),
+                  axis.ticks.y = element_blank(),
+                  axis.title.y = element_blank(),
+                  axis.text.x=element_text(size=10.5)) , nrow=1, ncol=3)
+
+figure=annotate_figure(figure, left = textGrob("Number of oysters deployed", rot = 90, vjust = 1, gp = gpar(cex = 1.25)))
+figure
+
+ggsave(plot=figure,"count_seatreatsite.png",path=plots,height=4.3, width=9.5)
+
+res.aov <- aov(n ~ Season, data=countseason)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.646
+
+#test for homogeneity
+leveneTest(n ~ Season, data=countseason)
+#equal variances p=0.6465
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=0.00001963 so not normal
+
+kruskal.test(n ~ Season, data=countseason)
+#pvalue=0.06089
+
+dunnTest(n ~ Season, data=countseason, method="bonferroni")
+
+
+```
+
+#measure proportional deaths
+```{r}
+propdeath=merge(countseason, deathseasons,by=c("Treatment","Season","Site"))
+```
+
+
+#old death season and death vs precip
+```{r}
+############## Death vs season #############
+deathwet <- metafile %>%
+    filter((timeofdeath > '2022-12-31 00:00:00') &
+        (timeofdeath<"2023-04-01 00:00:00")) %>%
+  group_by(Treatment,Site,Fielddeath) %>% 
+  summarise(n=n()) %>% 
+  group_by(Fielddeath) %>% 
+  mutate(prop=n/sum(n)) %>% 
+  filter(Fielddeath %in% "Yes") 
+
+deathdry <- metafile %>%
+  filter((timeofdeath>"2022-05-01 00:00:00"& timeofdeath<"2022-12-31 00:00:00")|(timeofdeath>"2023-04-01 00:00:00")) %>% 
+  group_by(Treatment,Site,Fielddeath) %>% 
+  summarise(n=n()) %>% 
+  group_by(Fielddeath) %>% 
+  mutate(prop=n/sum(n)) %>% 
+  filter(Fielddeath %in% "Yes") 
+
+
+seasondeath<- bind_rows(deathwet, deathdry, .id = 'Season')
+seasondeath=seasondeath %>% 
+  mutate(Season = recode(Season, '1' = 'Wet', '2' = 'Dry'))
+
+ggplot(seasondeath, aes(Treatment, fill=Season))+
+  geom_bar()+
+  theme_classic()
+
+ggsave(path=plots, "death_season/treatment.png", width=6, height=6)
+
+ggplot(seasondeath, aes(Site, fill=Season))+
+  geom_bar()+
+  theme_classic()
+
+ggsave(path=plots, "death_season/site.png", width=6, height=6)
+
+############### Death vs precip #####################
+precipdeath=bind_rows(precipsumday, metafile)
+
+ggplot(precipdeath, aes(DateTimeUTC, precipday))+
+  geom_vline(aes(xintercept= timeofdeath,
+             color = "Field death"), size = 1)+
+  geom_point()+
+  labs(x="Date", y="Cumulative precipitation/day (mm)")+
+  theme_classic()+
+  theme(axis.text = element_text(size = 15), axis.title = element_text(size = 20),legend.title = element_blank(),legend.margin = margin(0.2, 0.2, 0.2, 0.2, "cm"),legend.text = element_text(size=15))
+
+ggsave(path=plots, "death_precip.png", width=8, height=6)
 
 ```
 
@@ -1474,6 +3834,9 @@ cols[levels(my10MinuteSubset$SN)=="W.M.2.1020"]="red"
 
 highlight_types <- c('W.M.2.1020')
 
+lims <- as.POSIXct(strptime(c("2023-01-01 00:00:00", "2023-03-30 00:00:00"), 
+                   format = "%Y-%m-%d %H:%M:%S"))
+
 my10MinuteSubset %>%
   drop_na(binary) %>% 
   #use filter to subset the rows based on the LOCATION column values
@@ -1490,13 +3853,13 @@ my10MinuteSubset %>%
     #geom_line(aes(y=Prediction))+
     #geom_beeswarm(dodge.width=0,cex=2,groupOnX=FALSE)+
     facet_grid(Treatment~.)+
-    scale_x_datetime(date_labels = "%b", breaks = "1 month") +
+    scale_x_datetime(date_labels = "%b", breaks = "1 month",limits = lims) +
     #scale_colour_manual(values=cols) +
     scale_y_discrete(labels=c("0" = "Closed", "1" = "Open"))+
     labs(y="Gape", x="")+
-  theme_bw()+
+  theme_bw()
   #remove SN legend, take out grid lines but keep facet lines. Change font sizes
-  theme(legend.position = "none", axis.line=element_line(), panel.border = element_rect(color = "black",fill = NA,size = 1), panel.grid = element_blank(), axis.text = element_text(size = 20), axis.title = element_text(size = 30), strip.text = element_text(size = 20))
+  #theme(legend.position = "none", axis.line=element_line(), panel.border = element_rect(color = "black",fill = NA,size = 1), panel.grid = element_blank(), axis.text = element_text(size = 20), axis.title = element_text(size = 30), strip.text = element_text(size = 20))
 
 ggsave(path=plots,"gapealltreatment.png", width = 10, height = 6)
 
@@ -1728,6 +4091,73 @@ valvetreatment.glm <-  glm(formula = percentclosed ~ Treatment,
                    family = "binomial")
 
 
+```
+
+#number of days have data for/other metadata stuff
+```{r}
+gapedays=allgapemeta %>% 
+  group_by(Code) %>% 
+  mutate(Date=as.Date(DateTime)) %>%
+  select(-c(DateTime, Hall, Temp.C, Battery.V, SN, hallpercent, binary, Alive)) %>% 
+  group_by(Code) %>% 
+  filter(duplicated(Date) == FALSE) %>% 
+  summarise(sumdays = n())
+
+gapedays$Code=as.factor(gapedays$Code)
+
+ggplot(gapedays, aes(x=factor(0),y=sumdays))+
+  geom_boxplot()+
+  theme_classic()+
+  labs(y="Days of data collection", x="")+
+  stat_summary(fun.y=mean, geom="point", shape=23, size=4, fill="black")+
+  theme(axis.text.x =element_blank() , axis.ticks.x = element_blank(), axis.text = element_text(size = 15), axis.title = element_text(size = 20))
+
+range(gapedays$sumdays)
+
+ggsave(path=plots, "Gape_days_count.png", width=6, height=8)
+
+
+metasamplesize=allgapemeta %>% 
+  mutate(Date=as.Date(DateTime)) %>%
+  group_by(Code, Date) %>%
+  filter(duplicated(Code) == FALSE) %>% 
+  select(-c(DateTime, Hall, Temp.C, Battery.V, SN, hallpercent, binary, Alive)) %>% 
+  ungroup() %>% 
+  group_by(Date,Site,Treatment) %>% 
+  summarise(n = n())
+
+metasamplesize %>% 
+  filter(Treatment=="Eelgrass") %>% 
+  ggplot(aes(Date, n, col=Site))+
+    geom_point()+
+    theme_classic()
+
+ggplot(metasamplesize, aes(Date, n, col=Treatment))+
+  geom_point()+
+  facet_grid(~Site)+
+  scale_x_date(date_breaks = "4 months" , date_labels = "%b-%y")+
+  theme_bw()
+
+ggsave(path=plots, "samplesize_treatmentsite.png", width=7, height=4)
+
+mean(metasamplesize$n)
+
+totalsamplesize=metasamplesize %>% 
+  group_by(Date) %>% 
+  mutate(totaln=sum(n)) %>% 
+  select(-c(Treatment,Site,n)) %>% 
+  filter(duplicated(Date) == FALSE) 
+  
+
+ggplot(totalsamplesize, aes(Date, totaln))+
+  geom_point()+
+  labs(y="Total oysters collecting data")+
+ # scale_x_date(date_breaks = "months" , date_labels = "%b-%y")+
+  theme_bw()
+
+ggsave(path=plots, "total_sample_size.png", width=6, height=6)
+
+mean(totalsamplesize$totaln)
 ```
 
 
@@ -2315,7 +4745,10 @@ allgapemeta=allgapemeta%>%
     Code!="W.O.3.1095" & 
     Code!="P.M.4.1068" & 
     Code!="P.M.3.1069" & 
-    Code!="D.E.3.1036") 
+    Code!="D.E.3.1036")
+
+allgapemeta=allgapemeta %>% 
+  distinct()
 
 write.csv(allgapemeta, paste0(NewportDir,"combinedgapemeta/", "allgapemeta.csv"), row.names=FALSE)
 

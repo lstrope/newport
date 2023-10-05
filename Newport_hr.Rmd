@@ -1,5 +1,5 @@
 ---
-title: "HR code test"
+title: "Newport_hr"
 output: html_document
 editor_options: 
   chunk_output_type: console
@@ -26,7 +26,20 @@ library(signal)
 library(pracma)
 library(forecast)
 library(lubridate)
+library(car)
+library(dplyr)
 library(ggplot2)
+library(Hmisc)
+library(ggpattern)
+library(forcats)
+library(caTools)
+library(ROCR)
+library(nlme)
+library(ggfortify)
+library(betareg) #betareg stats
+library(multcomp) #tukey for betareg
+library(lme4) #binomial generalized linear mixed model
+library(grid) #textGrob
 ```
 
 #import files
@@ -47,7 +60,12 @@ NewportDir = paste0(localpath,'Newport_SSINP/')
 metafilePath = paste0(localpath,'Newport_SSINP/metadata/')
 
 #tides
-julyaugusttides=read.csv("../data/Newport_SSINP/tides/LAtides202207-202208.csv")
+tides=read.csv("../data/Newport_SSINP/environmental_data/LosAngeles_tides_202205-202307.csv")
+tides$DateTime=as.POSIXct(tides$TimeUTC, tz="UTC", format="%Y-%m-%d %H:%M")
+
+#precipitation
+precip=read.csv("../data/Newport_SSINP/environmental_data/Weather_data_KSNA_202205-202307.csv")
+precip$DateTimeUTC=as.POSIXct(precip$DateTimeUTC, tz="UTC", format="%Y-%m-%d %H:%M")
 
 #plots
 plots=paste0(localpath,'Newport_SSINP/plots/')
@@ -96,6 +114,97 @@ loadFieldMaintData <- function(filename,timezone = 'UTC'){
 
 ```
 
+#themes
+```{r}
+theme_classicmodify <- function(base_size = 11, base_family = "",
+                          base_line_size = base_size / 22,
+                          base_rect_size = base_size / 22) {
+  theme_bw(
+    base_size = base_size,
+    base_family = base_family,
+    base_line_size = base_line_size,
+    base_rect_size = base_rect_size
+  ) %+replace%
+    theme(
+      # no background and no grid
+      panel.border     = element_blank(),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_blank(),
+      axis.text = element_text(size = 15), 
+      axis.title = element_text(size = 20),
+      # show axes
+      axis.line      = element_line(colour = "black", linewidth = rel(1)),
+
+      # match legend key to panel.background
+      legend.key       = element_blank(),
+
+      # simple, black and white strips
+      strip.background = element_rect(fill = "white", colour = "black", linewidth = rel(2)),
+      # NB: size is 1 but clipped, it looks like the 0.5 of the axes
+
+      complete = TRUE
+    )
+}
+
+theme_classicmodifygrid <- function(base_size = 11, base_family = "",
+                          base_line_size = base_size / 22,
+                          base_rect_size = base_size / 22) {
+  theme_bw(
+    base_size = base_size,
+    base_family = base_family,
+    base_line_size = base_line_size,
+    base_rect_size = base_rect_size
+  ) %+replace%
+    theme(
+      # no background and no grid
+      panel.border     = element_blank(),
+      panel.grid.major = element_blank(),
+      panel.grid.minor = element_line(colour="grey"),
+      axis.text = element_text(size = 15), 
+      axis.title = element_text(size = 20),
+      # show axes
+      axis.line      = element_line(colour = "black", linewidth = rel(1)),
+
+      # match legend key to panel.background
+      legend.key       = element_blank(),
+
+      # simple, black and white strips
+      strip.background = element_rect(fill = "white", colour = "black", linewidth = rel(2)),
+      # NB: size is 1 but clipped, it looks like the 0.5 of the axes
+
+      complete = TRUE
+    )
+}
+```
+
+#graphing settings
+```{r}
+sitePalette <- c("#E69F00", "#56B4E9", "#009E73", "#0072B2")
+sitePalette2 <- c("#E69F00", "#E69F00","#56B4E9","#56B4E9", "#009E73", "#009E73","#0072B2","#0072B2")
+treatment2_palette = c("#C9C9C9", "#999999", "#70DCBE", "#009E73", "#DC9867", "chocolate4")
+treatment_palette=c("#999999", "#009E73", "chocolate4")
+treatmentidentical_palette=c("#999999","#999999","#009E73","#009E73","chocolate4","chocolate4")
+
+# Function to scale secondary axis
+scale_function <- function(x, scale, shift){
+  return ((x)*scale - shift)
+}
+
+# Function to scale secondary variable values
+inv_scale_function <- function(x, scale, shift){
+  return ((x + shift)/scale)
+}
+my_comparisons_season2=list(c("Winter","Summer"),c("Fall","Winter"),
+  c("Winter","Spring"))
+my_comparisons_season=list(c("Fall","Summer"),c(
+  "Winter","Summer"),c("Spring","Summer"),c("Fall","Winter"),c("Fall","Spring"),c("Winter","Spring"))
+my_comparisons_treat2=list(c("Oyster","Eelgrass"),c("Oyster","Mud"),c(
+  "Eelgrass","Mud"))
+my_comparisons=list(c("Winter","Summer"),c("Fall","Winter"),c("Winter","Spring"))
+my_comparisons_site=list(c("DeAnza","PCH"),c("DeAnza","Shellmaker"),c(
+  "DeAnza","Westcliff"),c("PCH","Shellmaker"),c("PCH","Westcliff"),c("Shellmaker","Westcliff"))
+```
+
 #import metadata
 ```{r}
 #import csv metadata_with edits. 
@@ -105,6 +214,23 @@ metafile = loadFieldMetaData(filename = (paste0(metafilePath,"field_metadata_for
 maintenance=loadFieldMaintData(filename = (paste0(metafilePath,"lowtide_metadata - Sheet1.csv")))
 
 oystercode = unique(metafile[,'Code'])
+
+#import growth measurements
+growth=read.csv(paste0(metafilePath, "growth_measurements - Sheet1.csv"))
+
+#import allgapemeta
+allgapemeta=read.csv(paste0(NewportDir,"combinedgapemeta/", "allgapemeta.csv"))
+#change datetime to posixct
+allgapemeta$DateTime=as.POSIXct(allgapemeta$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+
+#import allhrgapemeta
+allhrgapemeta=read.csv(paste0(metafilePath,"/allhrgapemeta.csv"),stringsAsFactors = T)
+allhrgapemeta$DateTime=as.POSIXct(allhrgapemeta$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+
+#import allhrmeta
+allhrmeta=read.csv(paste0(metafilePath,"/allhrmeta.csv"),stringsAsFactors = T)
+allhrmeta$DateTime=as.POSIXct(allhrmeta$DateTime, tz="UTC", format="%Y-%m-%d %H:%M:%S")
+
 ```
 
 #create combined heart files
@@ -544,8 +670,9 @@ getBPM = function(x,t1 = 1, sensor = 'IR',chunklength=240,
 		# record the mean of the 3 values as the finalBPM
 		if (resultsList$BPMagreeQuality.fft.forecast <= BPMqualityThreshold & 
 				resultsList$BPMagreeQuality.prac.forecast <= BPMqualityThreshold &
-				resultsList$BPMagreeQuality.prac.fft <= BPMqualityThreshold & 
-				resultsList$WeakSignalFlag == 'OK') {
+				resultsList$BPMagreeQuality.prac.fft <= BPMqualityThreshold
+				& resultsList$WeakSignalFlag == 'OK') {
+
 			resultsList$finalBPM = round(mean(resultsList$BPMfft,
 							resultsList$BPMforecast,
 							resultsList$BPMpeaks), digits = 1)
@@ -701,7 +828,7 @@ onKeybd <- function(key)
 oystercode = unique(metafile[,'Code']) #make list of all oyster codes 
 oystercode=oystercode[-c(1:23)] #manually change which codes are combined 
 #skipped D.M.1.1102 bc error in resultlist$DPMagreeQuality.fft.fo argument is of length zero
-#oy="D.M.1.1102"
+oy="W.O.5.1016"
 for (oy in (oystercode) ){ 
   if(exists('rawheartpath')) { rm(rawheartpath) }
   options(digits.secs = 3) # used to preserve milliseconds values in time stamps
@@ -731,7 +858,7 @@ for (oy in (oystercode) ){
   # lower (1/20-->1/15) low band if have low long dips but actually have 
   # quick peaks in there. Bc the smaller it gets, then only lets 
   # through small range of freq
-  myhighband = 1/15  # filtering - changing this has the largest effect, start around 1/15
+  myhighband = 1/10  # filtering - changing this has the largest effect, start around 1/15
   #1/5 letting more high freq peaks through. may also catch every little peak.
   myThreshold = 4 # Minimum agreement between BPM estimates
   
@@ -781,7 +908,7 @@ for (oy in (oystercode) ){
 
 mysensor = 'IR'
 
-oy = "W.E.5.1002"
+oy = "D.O.1.1042"
 
 # Open up the concatenated heart data for this oyster
 Heart = read.csv(paste0(comboheartpath,oy,'_comboheart.csv'))
@@ -879,7 +1006,10 @@ while (!quitFlag){
 	# Also get the rows for the sample periods before and after the target minute
 	t0 = which.min(abs( (tstamp-300) - Heart$DateTime))
 	t2 = which.min(abs( (tstamp+240) - Heart$DateTime))
-	HighBandDenom = 25  # Initial value should be 15 to make a 1/15 highband cutoff
+	
+	HighBandDenom = 10  # Initial value should be 15 to make a 1/15 highband cutoff
+	#Was 25
+	
 	# Make the first version of the plot
 	op = par()
 	par(mfcol = c(1,3), mar = c(5,5,5,1))
@@ -1094,20 +1224,22 @@ write.csv(df2,
           row.names=F)
 ```
 
-
 #grab QAd HR data and put in one big csv
 ```{r}
 #go through QAd HR files and pull out non NAs
 dfheart = data.frame()
 oystercode = unique(metafile[,'Code']) #make list of all oyster codes 
 #oystercode=oystercode[-c(1:23)] #manually change which codes are combined 
-oy="W.M.3.1021"
+
 for (oy in (oystercode) ){ 
   if(exists('rawQApath')) { rm(rawQApath) }
   options(digits.secs = 3) # used to preserve milliseconds values in time stamps
   rawQApath=file.path(paste0(heartoutputpath,oy,'_bpm_QA.csv'))
   if(!file.exists(rawQApath)) {
-			next
+			rawQApath=file.path(paste0(heartoutputpath,oy,'_bpm.csv'))
+			if(!file.exists(rawQApath)){
+			  next
+        } 
 		}
   Heart = read.csv(rawQApath)
   HeartnotNA= Heart[complete.cases(Heart[ , c('finalBPM')]), ] 
@@ -1116,25 +1248,1858 @@ for (oy in (oystercode) ){
   dfheart=rbind(dfheart, HeartnotNA) 
     
   write.csv(dfheart,
-  		file = paste0(heartoutputpath,'bpmQA.csv'),  
+  		file = paste0(heartoutputpath,'bpmall.csv'),  
   		row.names=FALSE)
 }
 ```
 
-#graph QAd HRs
+#combine QAd HRs with gape data
 ```{r}
-bpmQA=read.csv(paste0(heartoutputpath,'bpmQA.csv'))
+bpmQA <- read.csv(paste0(heartoutputpath,'bpmQA.csv'))
+bpmall<-read.csv(paste0(heartoutputpath,'bpmall.csv'))
 bpmQA$DateTime = as.POSIXct(bpmQA$DateTime, tz = 'UTC', format="%Y-%m-%d %H:%M:%S")
 bpmQA$Code=bpmQA$OysterCode
+bpmall$DateTime = as.POSIXct(bpmall$DateTime, tz = 'UTC', format="%Y-%m-%d %H:%M:%S")
+bpmall$Code=bpmall$OysterCode
 
-allhrmeta<-merge(bpmQA,metafile[, c("Site", "Treatment","Alive","Code")], by="Code")
+bpmQA2 <- subset(bpmQA,finalBPM > 2)
+bpmall2 <- subset(bpmall,finalBPM > 2)
 
-ggplot(allhrmeta, aes(DateTime, finalBPM, color=Site))+
-  geom_point(position="jitter")
+allhrmeta<-merge(bpmall2,metafile[, c("Site", "Treatment","Alive","Code")], by="Code")
+
+allhrgapemeta=merge(allgapemeta[,c("Code","DateTime","Temp.C","hallpercent","binary")],
+                    allhrmeta[,c("Code","DateTime","finalBPM",
+                                 "Site","Treatment")],
+                    by=c("DateTime","Code"))
+
+allhrgapemeta=allhrgapemeta %>% distinct()
+allhrmeta=allhrmeta %>% distinct()
+
+#change order of treatment
+allhrmeta$Treatment <- factor(allhrmeta$Treatment,levels = c("Oyster", "Eelgrass", "Mud"))
+#change order of sites
+allhrmeta$Site <- factor(allhrmeta$Site,levels = c("Westcliff", "PCH", "DeAnza", "Shellmaker"))
+write.csv(allhrmeta, paste0(metafilePath,"/allhrmeta.csv"))
+write.csv(allhrgapemeta, paste0(metafilePath,"/allhrgapemeta.csv"))
+```
+
+#average HR boxplots
+```{r}
+#NAs when datetime is 00:00:00 because DateTime column has NA for those timestamps
+fourseasonshr=allhrmeta %>%
+      mutate(Season = case_when( #new variable
+      DateTime >= "2022-07-15 00:00:00" & DateTime <= "2022-09-30 23:59:00" ~ "Summer", #define condition for factor levels
+      DateTime >="2022-10-01 00:00:00" & DateTime <= "2022-12-31 23:59:00" ~ "Fall",
+      DateTime >= "2023-01-01 00:00:00" & DateTime <= "2023-03-31 23:59:00" ~ "Winter",
+      DateTime >= "2023-04-01 00:00:00" & DateTime <= "2023-06-19 23:59:00" ~ "Spring",
+      TRUE ~ NA)) %>% 
+  filter(!is.na(Season)) %>% #display error if a value is not assigned to one of the previous groups
+  mutate_if(is.character, as.factor) %>% 
+  mutate(Season = fct_relevel(Season,c("Summer","Fall", "Winter", "Spring")),
+         Treatment= fct_relevel(Treatment,c("Mud","Oyster", "Eelgrass"))) %>% 
+  distinct()
+
+test2=fourseasonshr %>%
+  group_by(lubridate::floor_date(DateTime, "day"),Treatment,Site,Season,Code) %>%
+  mutate(rangebpm=max(finalBPM, na.rm=TRUE)-min(finalBPM, na.rm=TRUE))
+
+seasonspercentopencodehr=fourseasonshr %>%
+  group_by(lubridate::floor_date(DateTime, "day"),Treatment,Site,Season,Code) %>%
+  mutate(rangebpm=max(finalBPM, na.rm=TRUE)-min(finalBPM, na.rm=TRUE)) %>% 
+  ungroup() %>% 
+  group_by(Treatment,Site,Season,Code) %>% 
+  summarise(avgbpm=mean(finalBPM),rangebpm=mean(rangebpm))
+
+seasonsavgsitehr=seasonspercentopencodehr %>% 
+  group_by(Treatment,Season,Site) %>% 
+  dplyr::select(-c("Code")) %>% 
+  mutate(ntreats = n()) %>% 
+  mutate(avgbpm=mean(avgbpm),rangebpm=mean(rangebpm)) %>% 
+  distinct()
+
+#group by season
+ggplot(seasonsavgsitehr,aes(Season,avgbpm,fill=Season))+
+  geom_boxplot()+
+  stat_summary(fun=mean, geom="point", shape=23, size=5, color="black", fill="red")+
+  theme_classicmodify()+
+  labs(y="Average heart rate (bpm)")+
+  scale_fill_manual(values=season_palette)+
+  theme(legend.position="none")+
+  stat_n_text(size=5,y.pos=15) + 
+  ylim(0,16)
+
+ggsave(path=plots, "hr_fourseasons_box_stats.png",width=6, height=6)
+
+# Compute the analysis of variance
+res.aov <- aov(avgbpm ~ Season, data=seasonsavgsitehr)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.685
+
+#tukey pairwise
+TukeyHSD(res.aov)
+#None are sig
+
+#test for homogeneity
+leveneTest(avgbpm ~ Season, data=seasonsavgsitehr)
+#equal variances p=0.4675
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals )
+#pvalue=0.006502 not normal
+
+kruskal.test(avgbpm ~ Season, data=seasonsavgsitehr)
+#pvalue=0.803
+
+#####################
+#SITE
+# Compute the analysis of variance
+res.aov <- aov(avgbpm ~ Site, data=seasonsavgsitehr)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.271
+
+#tukey pairwise
+TukeyHSD(res.aov)
+#All comparisons not sig
+
+#or pairwise
+pairwise.t.test(seasonsavgsitehr$avgbpm,seasonsavgsitehr$Site,
+                 p.adjust.method = "BH")
+#All comparisons not sig
+
+#test for homogeneity
+leveneTest(avgbpm ~ Site, data=seasonsavgsitehr)
+#equal variances p=0.4461
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=0.005302 so not normal
+
+kruskal.test(avgbpm ~ Site, data=seasonsavgsitehr)
+#pvalue=0.1885
+
+ggboxplot(seasonsavgsitehr, x = "Site", y = "avgbpm",
+          color = "black", palette = sitePalette,fill="Site")+
+  stat_summary(fun=mean, geom="point", shape=23, size=5, color="black", fill="red")+
+  labs(y="Average heart rate (bpm)")+
+  stat_n_text(size=5,y.pos=15) + 
+  ylim(0,16)+
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=18),legend.text=element_text(size=12),legend.title=element_text(size=15))
+
+ggsave("hr_season_stats_site.png",path=plots,width=6, height=5)
+
+############
+#TREATMENT
+
+# Compute the analysis of variance
+res.aov <- aov(avgbpm ~ Treatment, data=seasonsavgsitehr)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.926
+
+#tukey pairwise
+TukeyHSD(res.aov)
+#All comparisons not sig
+
+#or pairwise
+pairwise.t.test(seasonsavgsitehr$avgbpm,seasonsavgsitehr$Treatment,
+                 p.adjust.method = "BH")
+#All comparisons not sig
+
+#test for homogeneity
+leveneTest(avgbpm ~ Treatment, data=seasonsavgsitehr)
+#equal variances p=0.8861
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=0.00306 so not normal
+
+kruskal.test(avgbpm ~ Treatment, data=seasonsavgsitehr)
+#pvalue=0.8687
+
+ggboxplot(seasonsavgsitehr, x = "Treatment", y = "avgbpm",
+          color = "black", palette = c("chocolate4","#999999","#009E73"),fill="Treatment")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  labs(y="Average heart rate (bpm)")+
+  #compare_means(avgpercentopen ~ Site,  data = test)+
+  #stat_compare_means(method = "anova")+
+  #stat_compare_means(label = "p.signif", method = "t.test",
+  #                   ref.group = "Winter") +
+  #stat_compare_means(comparisons = my_comparisons_site,label.y = c(1, 1.05, 1.13),aes(label = after_stat(p.signif)))+
+  stat_n_text(size=5,y.pos=15) + 
+  ylim(0,16)+
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=18),legend.text=element_text(size=12),legend.title=element_text(size=15))
+
+ggsave("hr_season_stats_treatment.png",path=plots,width=6, height=5)
+
+ggplot(data = seasonsavgsitehr,
+       aes(x = Season, y = avgbpm, fill = Treatment))+
+  geom_boxplot(col="black",position=position_dodge(.9))+
+  stat_summary(position=position_dodge(.9),fun="mean", geom="point", shape=18, size=3, color="black")+
+  theme_classicmodify()+
+  labs(y="Average heart rate (bpm)")+
+  ylim(0,16)+
+  scale_fill_manual(values=c( "chocolate4","#999999", "#009E73"))+
+  theme(legend.title=element_text(size=12),legend.text=element_text(size=12))
+
+ggsave("hr_season_boxplot_treat.png",path=plots,width=6, height=5)
+
+ggplot(seasonsavgsitehr,aes(x = Season, y = avgbpm, fill = Site))+
+  geom_boxplot(col="black",position=position_dodge(.9))+
+  stat_summary(position=position_dodge(.9),fun="mean", geom="point", shape=18, size=3, color="black")+
+  theme_classicmodify()+
+  labs(y="Average heart rate (bpm)")+
+  ylim(0,16)+
+  scale_fill_manual(values=sitePalette)+
+  theme(legend.title=element_text(size=12),legend.text=element_text(size=12))
+
+ggsave("hr_season_boxplot_site.png",path=plots,width=6, height=5)
+
+####################
+#combine avg hr season, site, treat
+
+#group by season
+seasonhrplot=ggplot(seasonsavgsitehr,aes(Season,avgbpm,fill=Season))+
+  geom_boxplot()+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  theme_classicmodify()+
+  labs(y="Average daily heart rate (bpm)",tag = "A")+
+  scale_fill_manual(values=season_palette)+
+  theme(legend.position="none")+
+  stat_n_text(size=5,y.pos=15) + 
+  ylim(0,16)+
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=18),legend.position="none")
+
+sitehrplot=ggboxplot(seasonsavgsitehr, x = "Site", y = "avgbpm",
+          color = "black", palette = sitePalette,fill="Site")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  labs(y="Average daily heart rate (bpm)",tag = "C")+
+  stat_n_text(size=5,y.pos=15) + 
+  ylim(0,16)+
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=18),legend.position="none")
+
+treathrplot=ggboxplot(seasonsavgsitehr, x = "Treatment", y = "avgbpm",
+          color = "black", palette = c("chocolate4","#999999","#009E73"),fill="Treatment")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  labs(y="Average daily heart rate (bpm)",tag = "B")+
+  #compare_means(avgpercentopen ~ Site,  data = test)+
+  #stat_compare_means(method = "anova")+
+  #stat_compare_means(label = "p.signif", method = "t.test",
+  #                   ref.group = "Winter") +
+  #stat_compare_means(comparisons = my_comparisons_site,label.y = c(1, 1.05, 1.13),aes(label = after_stat(p.signif)))+
+  stat_n_text(size=5,y.pos=15) + 
+  ylim(0,16)+
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=18),legend.position="none")
+
+figure=ggarrange(seasonhrplot+
+                   theme(
+                  axis.title.y = element_blank() ), 
+           treathrplot+ 
+            theme(axis.text.y = element_blank(),
+                  axis.ticks.y = element_blank(),
+                  axis.title.y = element_blank() ), 
+          sitehrplot+ 
+            theme(axis.text.y = element_blank(),
+                  axis.ticks.y = element_blank(),
+                  axis.title.y = element_blank() ) , nrow=1, ncol=3)
+
+figure=annotate_figure(figure, left = textGrob("Average daily heart rate (bpm)", rot = 90, vjust = 1, gp = gpar(cex = 1.25)))
+figure
+
+ggsave(plot=figure,"avghr_seatreatsite.png",path=plots,height=4, width=9)
+
 
 ```
 
+#range HR boxplots
+```{r}
+seasonsavgsitehr=seasonspercentopencodehr %>% 
+  group_by(Treatment,Season,Site) %>% 
+  dplyr::select(-c("Code")) %>% 
+  mutate(ntreats = n()) %>% 
+  mutate(avgbpm=mean(avgbpm),rangebpm=mean(rangebpm)) %>% 
+  distinct()
 
+#group by season
+ggplot(seasonsavgsitehr,aes(Season,rangebpm,fill=Season))+
+  geom_boxplot()+
+  stat_summary(fun=mean, geom="point", shape=23, size=5, color="black", fill="red")+
+  theme_classicmodify()+
+  labs(y="Average daily heart rate range (bpm)")+
+  scale_fill_manual(values=season_palette)+
+  theme(legend.position="none")+
+  stat_n_text(size=5,y.pos=15) + 
+  ylim(0,16)
+
+ggsave(path=plots, "rangehr_fourseasons_box_stats.png",width=6, height=6)
+
+# Compute the analysis of variance
+res.aov <- aov(rangebpm ~ Season, data=seasonsavgsitehr)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.33
+
+#tukey pairwise
+TukeyHSD(res.aov)
+#None are sig
+
+#test for homogeneity
+leveneTest(rangebpm ~ Season, data=seasonsavgsitehr)
+#not equal variances p=0.03096 
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals )
+#pvalue=0.8223 normal
+
+kruskal.test(rangebpm ~ Season, data=seasonsavgsitehr)
+#pvalue=0.3582
+
+#####################
+#SITE
+# Compute the analysis of variance
+res.aov <- aov(rangebpm ~ Site, data=seasonsavgsitehr)
+# Summary of the analysis
+summary(res.aov)
+#pvalue=0.67
+
+#tukey pairwise
+TukeyHSD(res.aov)
+#All comparisons not sig
+
+#test for homogeneity
+leveneTest(rangebpm ~ Site, data=seasonsavgsitehr)
+#not equal variances p=0.02936
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=0.8646 so normal
+
+kruskal.test(rangebpm ~ Site, data=seasonsavgsitehr)
+#pvalue=0.7885
+
+ggboxplot(seasonsavgsitehr, x = "Site", y = "rangebpm",
+          color = "black", palette = sitePalette,fill="Site")+
+  stat_summary(fun=mean, geom="point", shape=23, size=5, color="black", fill="red")+
+  labs(y="Average daily heart rate range (bpm)")+
+  stat_n_text(size=5,y.pos=15) + 
+  ylim(0,16)+
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=18),legend.text=element_text(size=12),legend.title=element_text(size=15))
+
+ggsave("rangehr_season_stats_site.png",path=plots,width=6, height=5)
+
+############
+#TREATMENT
+
+# Compute the analysis of variance
+res.aov <- aov(rangebpm ~ Treatment, data=seasonsavgsitehr)
+# Summary of the analysis
+summary(res.aov)
+#pvalue= 0.0195 Significant
+
+#tukey pairwise bc passes assumptions
+TukeyHSD(res.aov)
+#Eelgrass sig diff from oyster
+
+#or pairwise
+pairwise.t.test(seasonsavgsitehr$rangebpm,seasonsavgsitehr$Treatment,
+                 p.adjust.method = "BH")
+#All comparisons not sig
+
+#test for homogeneity
+leveneTest(rangebpm ~ Treatment, data=seasonsavgsitehr)
+#equal variances p=0.2516
+plot(res.aov, 1)
+
+#test for normality
+plot(res.aov, 2)
+#test with Shapiro-Wilk
+# Extract the residuals
+aov_residuals <- residuals(object = res.aov )
+# Run Shapiro-Wilk test
+shapiro.test(x = aov_residuals)
+#pvalue=0.8951 so normal
+
+my_comparisons_treat=list(c("Mud","Oyster"),c("Mud","Eelgrass"),c("Oyster","Eelgrass"))
+
+ggboxplot(seasonsavgsitehr, x = "Treatment", y = "rangebpm",
+          color = "black", palette = c("chocolate4","#999999","#009E73"),fill="Treatment")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  labs(y="Average daily heart rate range (bpm)")+
+  #compare_means(avgpercentopen ~ Site,  data = test)+
+  #stat_compare_means(method = "anova")+
+  #stat_compare_means(label = "p.signif", method = "t.test",
+  #                   ref.group = "Winter") +
+  stat_compare_means(comparisons = my_comparisons_treat,label.y = c(11.2, 12.5, 14),aes(label = after_stat(p.signif)))+
+  stat_n_text(size=5,y.pos=16.3) + 
+  ylim(0,16.5)+
+  theme(axis.text=element_text(size=15),
+        axis.title=element_text(size=18),legend.text=element_text(size=12),legend.title=element_text(size=15))
+
+ggsave("rangehr_stats_treatment.png",path=plots,width=6, height=5)
+
+ggplot(data = seasonsavgsitehr,
+       aes(x = Season, y = rangebpm, fill = Treatment))+
+  geom_boxplot(col="black",position=position_dodge(.9))+
+  stat_summary(position=position_dodge(.9),fun="mean", geom="point", shape=18, size=3, color="black")+
+  theme_classicmodify()+
+  labs(y="Average daily heart rate range (bpm)")+
+  ylim(0,16)+
+  scale_fill_manual(values=c( "chocolate4","#999999", "#009E73"))+
+  theme(legend.title=element_text(size=12),legend.text=element_text(size=12))
+
+ggsave("rangehr_season_boxplot_treat.png",path=plots,width=6, height=5)
+
+ggplot(seasonsavgsitehr,aes(x = Season, y = rangebpm, fill = Site))+
+  geom_boxplot(col="black",position=position_dodge(.9))+
+  stat_summary(position=position_dodge(.9),fun="mean", geom="point", shape=18, size=3, color="black")+
+  theme_classicmodify()+
+  labs(y="Average daily heart rate range (bpm)")+
+  ylim(0,16)+
+  scale_fill_manual(values=sitePalette)+
+  theme(legend.title=element_text(size=12),legend.text=element_text(size=12))
+
+ggsave("rangehr_season_boxplot_site.png",path=plots,width=6, height=5)
+
+##############
+#range hr with site, treat, season
+seasonrangeplot=ggplot(seasonsavgsitehr,aes(Season,rangebpm,fill=Season))+
+  geom_boxplot()+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  theme_classicmodify()+
+  labs(y="Average daily heart rate range (bpm)",tag = "A")+
+  scale_fill_manual(values=season_palette)+
+  theme(legend.position="none")+
+  stat_n_text(size=5,y.pos=15) + 
+  ylim(0,16)+
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=18),legend.position="none")
+
+siterangeplot=ggboxplot(seasonsavgsitehr, x = "Site", y = "rangebpm",
+          color = "black", palette = sitePalette,fill="Site")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  labs(y="Average daily heart rate range (bpm)",tag = "C")+
+  stat_n_text(size=5,y.pos=15) + 
+  ylim(0,16)+
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=18),legend.position="none")
+
+treatrangeplot=ggboxplot(seasonsavgsitehr, x = "Treatment", y = "rangebpm",
+          color = "black", palette = c("chocolate4","#999999","#009E73"),fill="Treatment")+
+  stat_summary(fun=mean, geom="point", shape=23, size=4, color="black", fill="red")+
+  labs(y="Average daily heart rate range (bpm)",tag = "B")+
+  #compare_means(avgpercentopen ~ Site,  data = test)+
+  #stat_compare_means(method = "anova")+
+  #stat_compare_means(label = "p.signif", method = "t.test",
+  #                   ref.group = "Winter") +
+  #stat_compare_means(comparisons = my_comparisons_treat2,label.y = c(11.2, 12.5, 14),aes(label = after_stat(p.signif)))+
+  geom_signif(comparisons = my_comparisons_treat2,map_signif_level = TRUE,y_position = c(11.2, 12.5, 14),annotation = c("*", "ns","ns"))+
+  stat_n_text(size=5,y.pos=16.3) + 
+  ylim(0,16.5)+
+  theme(axis.text=element_text(size=10),
+        axis.title=element_text(size=18),legend.position="none")
+
+figure=ggarrange(seasonrangeplot+
+                   theme(
+                  axis.title.y = element_blank() ), 
+           treatrangeplot+ 
+            theme(axis.text.y = element_blank(),
+                  axis.ticks.y = element_blank(),
+                  axis.title.y = element_blank() ), 
+          siterangeplot+ 
+            theme(axis.text.y = element_blank(),
+                  axis.ticks.y = element_blank(),
+                  axis.title.y = element_blank() ) , nrow=1, ncol=3)
+
+figure=annotate_figure(figure, left = textGrob("Average daily heart rate range (bpm)", rot = 90, vjust = 1, gp = gpar(cex = 1.25)))
+figure
+library(ggpubr)
+ggsave(plot=figure,"rangehr_seatreatsite.png",path=plots,height=4.3, width=9)
+```
+
+
+#graph allhrgapemeta 
+```{r}
+ggplot(allhrgapemeta, aes(Treatment, Temp.C))+
+  geom_boxplot()
+
+#ANCOVA graph
+ggplot(allhrgapemeta, aes(Temp.C,finalBPM, col=Code))+
+  geom_point()+
+  theme_classic()+
+  geom_smooth()
+
+ggsave(path=plots, "temp_hr_allcode.png",width=6, height=6)
+
+ggplot(allhrgapemeta, aes(Site,finalBPM))+
+  geom_boxplot(col="black",fill=sitePalette)+
+  labs(y="Heart rate (bpm)")+
+  theme_classicmodify()
+
+ggsave(path=plots, "site_hr_all.png",width=6, height=6)
+
+ggplot(allhrgapemeta, aes(Treatment,finalBPM))+
+  geom_boxplot(col="black",fill=treatment_palette)+
+  theme_classicmodify()+
+  labs(y="Heart rate (bpm)")+
+  theme()
+
+ggsave(path=plots, "treat_hr_all.png",width=6, height=6)
+
+```
+
+#Raw hr vs gape logistic regression 
+```{r}
+#logistic regression plot
+ggplot(allhrgapemeta, aes(finalBPM, binary)) + 
+  geom_point() +
+	stat_smooth(method="glm", 
+				method.args = list(family=binomial))+
+  theme_classicmodify()+
+  labs(x="Heart rate (bpm)", y="Gape binary (0=closed, 1=open)")
+  
+
+ggsave(path=plots, "hr_gapebinary.png", width=6, height=6)
+
+ggplot(allhrgapemeta, aes(finalBPM, binary,col=Treatment)) + 
+  geom_point() +
+	stat_smooth(method="glm", 
+				method.args = list(family=binomial))+
+  theme_classicmodify()+
+  scale_color_manual(values=treatment_palette)+
+  labs(x="Heart rate (bpm)", y="Gape binary (0=closed, 1=open)")
+  
+
+ggsave(path=plots, "hr_gapebinary_treatment.png", width=6, height=6)
+
+ggplot(allhrgapemeta, aes(finalBPM, binary,col=Site)) + 
+  geom_point() +
+	stat_smooth(method="glm", 
+				method.args = list(family=binomial))+
+  theme_classicmodify()+
+  scale_color_manual(values=sitePalette)+
+  labs(x="Heart rate (bpm)", y="Gape binary (0=closed, 1=open)")
+  
+
+ggsave(path=plots, "hr_gapebinary_site.png", width=6, height=6)
+
+
+```
+
+#stats
+```{r}
+#ANCOVA for temp and hr 
+#test assumption 1 that temp and treatment are independent 
+model <- aov(Temp.C ~ Treatment, data = allhrgapemeta)
+summary(model)
+#for some reason pvalue 9s <2e-16? But graph shows a ton of boxplot overlap in temp across treatments. Maybe too much data?
+
+#test assumption 2 levene's test. Make sure variances among groups are equal
+leveneTest(finalBPM~Treatment, data = allhrgapemeta)
+#pvalue=<2.2e-16 variances not equal, transform finalBPM
+allhrgapemeta <- mutate(allhrgapemeta, logfinalBPM = log10(finalBPM))
+
+#try ANCOVA
+ancova_model <- aov(logfinalBPM ~ Temp.C + Treatment, data = allhrgapemeta)
+Anova(ancova_model, type="III")
+#says treatment and temp are highly sig. 
+
+plot(ancova_model, which = 2)
+#residual line isn't super linear
+
+```
+
+#average weighted HRs 
+```{r}
+#group by code, take weighted mean and variance with HMISC package-wtd.var, stats package-weighted.mean
+
+
+allhrgapeweight=allhrgapemeta %>% 
+  group_by(Code) %>% 
+  mutate(Count = n(),avghr=mean(finalBPM), varhr=var(finalBPM)) %>%
+  ungroup() %>% 
+  group_by(Treatment,Site) %>%
+  summarise(avg_hr_weight = weighted.mean(finalBPM, Count), var_hr_weight=wtd.var(finalBPM, Count))
+
+hrgapebinary=allhrgapemeta %>% 
+  group_by(Code) %>% 
+  mutate(Count = n(),avghr=mean(finalBPM), varhr=var(finalBPM)) %>%
+  ungroup() %>% 
+  group_by(Treatment,Site,binary) %>%
+  na.omit() %>% 
+  summarise(avg_hr_weight = weighted.mean(finalBPM, Count),
+            var_hr_weight=wtd.var(finalBPM, Count))
+
+ggplot(allhrgapeweight, aes(Treatment, avg_hr_weight))+
+  geom_bar(position="dodge", stat="summary", fun="mean",fill=treatment_palette,col="black")+
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  theme_classicmodify()+
+  labs(y="Average heart rate (bpm)")
+
+ggsave(path=plots, "avghrweighted_treatment.png", width=6, height=6)
+
+ggplot(allhrgapeweight, aes(Site, avg_hr_weight))+
+  geom_bar(position="dodge", stat="summary", fun="mean",fill=sitePalette,col="black")+
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  theme_classicmodify()+
+  labs(y="Average heart rate (bpm)")
+
+ggsave(path=plots, "avghrweighted_site.png", width=6, height=6)
+
+ggplot(allhrgapeweight, aes(Treatment, var_hr_weight))+
+  geom_bar(position="dodge", stat="summary", fun="mean",fill=treatment_palette,col="black")+
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  theme_classicmodify()+
+  labs(y="Daily range in heart rate (bpm)")
+
+ggsave(path=plots, "varhrweighted_treatment.png", width=6, height=6)
+
+ggplot(allhrgapeweight, aes(Site, var_hr_weight))+
+  geom_bar(position="dodge", stat="summary", fun="mean",fill=sitePalette,col="black")+
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  theme_classicmodify()+
+  labs(y="Variability heart rate (bpm)")
+
+ggsave(path=plots, "varhrweighted_site.png", width=6, height=6)
+
+ggplot(hrgapebinary, aes(Treatment, avg_hr_weight, fill=interaction(binary,Treatment)))+
+  geom_bar(position="dodge", stat="summary", fun="mean",col="black")+
+  scale_fill_manual(values=treatment2_palette)+
+  guides(pattern = guide_legend(override.aes = list(fill = "white"),title="Open/Closed",size=20),
+         fill = guide_legend(override.aes = list(pattern = "none")))+
+  stat_summary(position=position_dodge(0.9), fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  theme_classicmodify()+
+  #guides(fill = "none")+
+  labs(y="Average heart rate (bpm)")
+
+ggsave(path=plots, "avghrweighted_treat_binary.png", width=6, height=6)
+
+ggplot(hrgapebinary, aes(Treatment, var_hr_weight, fill=interaction(binary,Treatment)))+
+  geom_bar(position="dodge", stat="summary", fun="mean",col="black")+
+  scale_fill_manual(values=treatment2_palette)+
+  guides(pattern = guide_legend(override.aes = list(fill = "white"),title="Open/Closed",size=20),
+         fill = guide_legend(override.aes = list(pattern = "none")))+
+  stat_summary(position=position_dodge(0.9), fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  theme_classicmodify()+
+  #guides(fill = "none")+
+  labs(y="Daily range in heart rate (bpm)")
+
+ggsave(path=plots, "varhrweighted_treat_binary.png", width=6, height=6)
+
+ggplot(hrgapebinary, aes(Site, var_hr_weight, fill=interaction(binary,Site)))+
+  geom_bar(position="dodge", stat="summary", fun="mean",col="black")+
+  scale_fill_manual(values=sitePalette2)+
+  guides(pattern = guide_legend(override.aes = list(fill = "white"),title="Open/Closed",size=20),
+         fill = guide_legend(override.aes = list(pattern = "none")))+
+  stat_summary(position=position_dodge(0.9), fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  theme_classicmodify()+
+  #guides(fill = "none")+
+  labs(y="Variability heart rate (bpm)")
+
+ggsave(path=plots, "varhrweighted_site_binary.png", width=6, height=6)
+
+ggplot(hrgapebinary, aes(Site, avg_hr_weight, fill=interaction(binary,Site)))+
+  geom_bar(position="dodge", stat="summary", fun="mean",col="black")+
+  scale_fill_manual(values=sitePalette2)+
+  guides(pattern = guide_legend(override.aes = list(fill = "white"),title="Open/Closed",size=20),
+         fill = guide_legend(override.aes = list(pattern = "none")))+
+  stat_summary(position=position_dodge(0.9), fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  theme_classicmodify()+
+  #guides(fill = "none")+
+  labs(y="Average heart rate (bpm)")
+
+ggsave(path=plots, "avghrweighted_site_binary.png", width=6, height=6)
+
+ggplot(hrgapebinary, aes(binary, avg_hr_weight))+
+  geom_bar(position="dodge", stat="summary", fun="mean",col="black")+
+  stat_summary(position=position_dodge(0.9), fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  theme_classicmodify()+
+  labs(y="Average heart rate (bpm)")
+
+ggsave(path=plots, "avghrweighted_binary.png",width=6, height=6)
+
+ggplot(hrgapebinary, aes(binary, var_hr_weight))+
+  geom_bar(position="dodge", stat="summary", fun="mean",col="black")+
+  stat_summary(position=position_dodge(0.9), fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  theme_classicmodify()+
+  labs(y="Variability heart rate (bpm)")
+
+ggsave(path=plots, "varhrweighted_binary.png",width=6, height=6)
+
+```
+
+#HR through time graphs
+```{r}
+ggplot(allhrgapemeta, aes(DateTime, finalBPM,col=Treatment))+
+  geom_point()+
+  theme_classicmodify()+
+  labs(y="Average heart rate (bpm)")+
+  geom_smooth()
+
+ggsave(path=plots, "hr_time_treatment.png", width=8, height=6)
+
+ggplot(allhrgapemeta, aes(DateTime, finalBPM,col=Site))+
+  geom_point()+
+  theme_classicmodify()+
+  labs(y="Average heart rate (bpm)")+
+  geom_smooth()
+
+ggsave(path=plots, "hr_time_site.png", width=8, height=6)
+
+ggplot(allhrgapemeta, aes(DateTime, finalBPM))+
+  geom_point()+
+  theme_classicmodify()+
+  labs(y="Average heart rate (bpm)")+
+  geom_smooth()
+
+ggsave(path=plots, "hr_time.png", width=8, height=6)
+```
+
+#range per day
+```{r}
+hrvarday=allhrmeta %>% 
+  group_by(day = floor_date(DateTime, unit = "day")) %>%
+  summarise(hrday_mean=mean(finalBPM, na.rm=T),
+            hrday_var=max(finalBPM, na.rm=TRUE)-min(finalBPM, na.rm=TRUE))
+  
+ggplot(hrvarday, aes(day, hrday_var))+
+  geom_point()+
+  theme_classicmodify()+
+  labs(x="Date",y="Variability heart rate (bpm)")
+
+ggsave(path=plots, "hrvar_day.png",height=6, width=6)
+
+#separate by treatment/code/site
+hrvarday_grouped=allhrmeta %>% 
+  group_by(day = floor_date(DateTime, unit = "day"),Treatment,Site,Code) %>%
+  summarise(hrday_mean=mean(finalBPM, na.rm=T),
+            hrday_var=max(finalBPM, na.rm=TRUE)-min(finalBPM, na.rm=TRUE))
+
+#separate by treatment/code/site
+hrvarday_grouped_code=allhrgapemeta %>% 
+  group_by(day = floor_date(DateTime, unit = "day"),Code) %>%
+  mutate(hrday_mean=mean(finalBPM, na.rm=T),
+            hrday_var=max(finalBPM, na.rm=TRUE)-min(finalBPM, na.rm=TRUE))
+
+ggplot(hrvarday_grouped_code, aes(day,hrday_var,col=Code))+
+  geom_point()+
+ # geom_smooth()+
+  theme_classicmodify()+
+  #scale_color_manual(values=treatment_palette)+
+  labs(x="Date",y="Variability heart rate (bpm)")
+
+ggsave(path=plots, "hrvar_day_treat.png",height=6, width=6)
+
+ggplot(allhrmeta, aes(Code,finalBPM,col=Code))+
+  geom_boxplot()+
+ # geom_smooth()+
+  theme_classicmodify()+
+  #scale_color_manual(values=treatment_palette)+
+  labs(x="Date",y="Variability heart rate (bpm)")
+
+ggsave(path=plots, "hrvar_day_code.png",height=6, width=6)
+
+ggplot(hrvarday_grouped, aes(day,hrday_var,col=Treatment))+
+  geom_point()+
+  geom_smooth()+
+  theme_classicmodify()+
+  scale_color_manual(values=c( "#009E73","#999999","chocolate4"))+
+  labs(x="Date",y="Daily average heart rate range (bpm)")
+
+ggsave(path=plots, "hrvar_day_treat.png",height=6, width=6)
+
+ggplot(hrvarday_grouped, aes(day,hrday_var,col=Site))+
+  geom_point()+
+  geom_smooth()+
+  theme_classicmodify()+
+  scale_color_manual(values=sitePalette)+
+  labs(x="Date",y="Variability heart rate (bpm)")
+
+ggsave(path=plots, "hrvar_day_site.png",height=6, width=6)
+
+ggplot(hrvarday_grouped, aes(day,hrday_var,col=Code))+
+  geom_line()+
+  #geom_smooth()+
+  theme_classicmodify()+
+  labs(x="Date",y="Variability heart rate (bpm)")
+
+ggsave(path=plots, "hrvar_day_code.png",height=6, width=10)
+
+#max HR by code
+allhrmeta %>% 
+  group_by(Code) %>% 
+  summarise(maxhr=max(finalBPM)) %>% 
+  ggplot(aes(Code, maxhr))+
+  geom_point()+
+  ylim(0,10)
+
+hrvartreatment=fourseasonshr %>%
+  #filter(Code!="D.M.6.1054") %>% #remove outliers
+  #filter(Code!="W.O.5.1016") %>% 
+  group_by(lubridate::floor_date(DateTime, "day"),Treatment,Site,Season,Code) %>%
+  mutate(rangebpm=max(finalBPM, na.rm=TRUE)-min(finalBPM, na.rm=TRUE)) %>% 
+  ungroup() %>% 
+  group_by(Treatment,day=lubridate::floor_date(DateTime, "day")) %>% 
+  summarise(avgbpm=mean(finalBPM),rangebpm=mean(rangebpm))
+
+testhr=fourseasonshr %>%
+  #filter(Code!="D.M.6.1054") %>% #remove outliers
+  #filter(Code!="W.O.5.1016") %>% 
+  group_by(lubridate::floor_date(DateTime, "day"),Treatment,Site,Season,Code) %>%
+  summarise(rangebpm=max(finalBPM, na.rm=TRUE)-min(finalBPM, na.rm=TRUE)) 
+
+ggplot(testhr, aes(`lubridate::floor_date(DateTime, "day")`,rangebpm,col=Treatment))+
+  geom_point()+
+  geom_smooth()+
+  #ylim(0,16)+
+  theme_classicmodify()+
+  scale_color_manual(values=c("chocolate4", "#999999","#009E73"))+
+  labs(x="Date",y="Daily average heart rate range (bpm)")
+
+ggsave("hrrange_treat_line.png",path=plots, width=8, height=6)
+```
+
+#HR per season
+```{r}
+hrwet <- hrvarday_grouped %>%
+    filter((DateTime > '2022-12-31 00:00:00') &
+        (DateTime<"2023-04-01 00:00:00"))
+
+hrdry <- hrvarday_grouped %>%
+    filter((DateTime>"2022-05-01 00:00:00"& DateTime<"2022-12-31 00:00:00")|(DateTime>"2023-04-01 00:00:00"))
+
+hrseason<- bind_rows(hrwet, hrdry, .id = 'Season')
+
+hrseason=hrseason %>% 
+  mutate(Season = recode(Season, '1' = 'Wet', '2' = 'Dry')) 
+
+#take avg and var hr for each oyster each day and average by site, treatment, and season
+hrseasongrouped=hrseason %>% 
+  group_by(Treatment,Site,Season) %>%
+  summarise(hr_mean=mean(hrday_mean),
+         avghr_var=mean(hrday_var),
+         Count = n(),
+         hrse=sd(hrday_mean)/sqrt(Count))
+
+ggplot(hrseasongrouped, aes(Treatment, hr_mean, fill=interaction(Season, Treatment)))+
+    geom_bar_pattern(stat="summary", fun="mean",
+        aes(pattern = Season),
+        colour = "black",
+        pattern_fill = "black",
+        pattern_angle = 45,
+        pattern_density = 0.05,
+        pattern_spacing = 0.02,
+        pattern_key_scale_factor = 0.6,
+        position = position_dodge(width = .9)) +
+    stat_summary(position=position_dodge(0.9), fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  #geom_errorbar(aes(ymin=hr_mean-hrse, ymax=hr_mean+hrse),position=position_dodge(width = .9), width=0.2,size = 0.75)+
+  scale_pattern_manual(values = c(Dry="stripe", Wet="none")) +
+  scale_fill_manual(values=treatmentidentical_palette)+
+  guides(pattern = guide_legend(override.aes = list(fill = "white"),title="Season",size=20),
+         fill = guide_legend(override.aes = list(pattern = "none")))+
+  theme_classicmodify()+
+  labs(y="Average heart rate (bpm)")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 25),legend.title = element_text(size=25), legend.text = element_text(size=15))+
+  guides(fill = "none")
+
+ggsave(path=plots, "avghr_treat_season.png",width=6, height=6)
+
+ggplot(hrseasongrouped, aes(Treatment, avghr_var, fill=interaction(Season, Treatment)))+
+    geom_bar_pattern(stat="summary", fun="mean",
+        aes(pattern = Season),
+        colour = "black",
+        pattern_fill = "black",
+        pattern_angle = 45,
+        pattern_density = 0.05,
+        pattern_spacing = 0.02,
+        pattern_key_scale_factor = 0.6,
+        position = position_dodge(width = .9)) +
+    stat_summary(position=position_dodge(0.9), fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  scale_pattern_manual(values = c(Dry="stripe", Wet="none")) +
+  scale_fill_manual(values=treatmentidentical_palette)+
+  guides(pattern = guide_legend(override.aes = list(fill = "white"),title="Season",size=20),
+         fill = guide_legend(override.aes = list(pattern = "none")))+
+  theme_classicmodify()+
+  labs(y="Average daily range in heart rate (bpm)")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 25),legend.title = element_text(size=25), legend.text = element_text(size=15))+
+  guides(fill = "none")
+
+ggsave(path=plots, "avgvar_treat_season.png",width=8, height=8)
+
+ggplot(hrseasongrouped, aes(Site, avghr_var, fill=interaction(Season, Site)))+
+    geom_bar_pattern(stat="summary", fun="mean",
+        aes(pattern = Season),
+        colour = "black",
+        pattern_fill = "black",
+        pattern_angle = 45,
+        pattern_density = 0.05,
+        pattern_spacing = 0.02,
+        pattern_key_scale_factor = 0.6,
+        position = position_dodge(width = .9)) +
+    stat_summary(position=position_dodge(0.9), fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  scale_pattern_manual(values = c(Dry="stripe", Wet="none")) +
+  scale_fill_manual(values=sitePalette2)+
+  guides(pattern = guide_legend(override.aes = list(fill = "white"),title="Season",size=20),
+         fill = guide_legend(override.aes = list(pattern = "none")))+
+  theme_classicmodify()+
+  labs(y="Average daily range in heart rate (bpm)")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 25),legend.title = element_text(size=25), legend.text = element_text(size=15))+
+  guides(fill = "none")
+
+ggsave(path=plots, "avgvar_site_season.png",width=8, height=8)
+
+ggplot(hrseasongrouped, aes(Site, hr_mean, fill=interaction(Season, Site)))+
+    geom_bar_pattern(stat="summary", fun="mean",
+        aes(pattern = Season),
+        colour = "black",
+        pattern_fill = "black",
+        pattern_angle = 45,
+        pattern_density = 0.05,
+        pattern_spacing = 0.02,
+        pattern_key_scale_factor = 0.6,
+        position = position_dodge(width = .9)) +
+    stat_summary(position=position_dodge(0.9), fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  scale_pattern_manual(values = c(Dry="stripe", Wet="none")) +
+  scale_fill_manual(values=sitePalette2)+
+  guides(pattern = guide_legend(override.aes = list(fill = "white"),title="Season",size=20),
+         fill = guide_legend(override.aes = list(pattern = "none")))+
+  theme_classicmodify()+
+  labs(y="Average heart rate (bpm)")+
+  theme(axis.text = element_text(size = 20), axis.title = element_text(size = 25),legend.title = element_text(size=25), legend.text = element_text(size=15))+
+  guides(fill = "none")
+
+ggsave(path=plots, "avghr_site_season.png",width=8, height=8)
+
+```
+
+#HR per 4 seasons
+```{r}
+#hrvarday_grouped from range per day
+seasonhr=hrvarday_grouped %>%
+    ungroup() %>% 
+    mutate(Season = case_when( #new variable
+          DateTime >= "2022-07-15 00:00:00" & DateTime <= "2022-09-30 23:59:00" ~ "Summer", #define condition for factor levels
+          DateTime >="2022-10-01 00:00:00" & DateTime <= "2022-12-31 23:59:00" ~ "Fall",
+          DateTime >= "2023-01-01 00:00:00" & DateTime <= "2023-03-31 23:59:00" ~ "Winter",
+          DateTime >= "2023-04-01 00:00:00" & DateTime <= "2023-06-19 23:59:00" ~ "Spring",
+          TRUE ~ NA)) %>% #display error if a value is not assigned to one of the previous groups
+  filter(!is.na(Season)) %>% 
+  mutate_if(is.character, as.factor) %>% 
+  mutate(Season = fct_relevel(Season,c("Summer","Fall", "Winter", "Spring")),
+          Treatment= fct_relevel(Treatment,c("Mud","Oyster", "Eelgrass"))) %>% 
+  select(-c("DateTime","Temp.C","hallpercent","binary","finalBPM")) %>% 
+  distinct()
+
+seasonhrsite=seasonhr %>% 
+  group_by(Treatment,Site,Code,Season) %>% 
+  mutate(ntreats = n()) %>% 
+  mutate(avghr=mean(hrday_mean),avgse=sd(hrday_mean)/sqrt(ntreats),
+         avgrange=mean(hrday_var)) 
+
+ggplot(seasonhrsite,aes(Season,avghr,fill=Season))+
+  geom_bar(position="dodge", stat="summary", fun="mean",col="black")+
+  #geom_errorbar(aes(ymin=avghr-avgse, ymax=avghr+avgse), width=.2,
+               #  position=position_dodge(.9),stat="summary")+ #same thing
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  theme_classicmodify()+
+  labs(y="Average daily heart rate (bpm)")+
+  scale_fill_manual(values=season_palette)+
+  theme(legend.position="none")
+
+ggsave(path=plots, "avghr_fourseasons.png",width=6, height=6)
+
+ggplot(seasonhr,aes(Season,hrday_mean,fill=Season))+
+  geom_boxplot()+
+  stat_summary(fun=mean, geom="point", shape=18, size=5, color="black", fill="red")+
+  theme_classicmodify()+
+  labs(y="Average daily heart rate (bpm)")+
+  scale_fill_manual(values=season_palette)+
+  theme(legend.position="none")
+
+ggsave(path=plots, "avghr_fourseasons_box.png",width=6, height=6)
+
+ggplot(seasonhrsite,aes(Season,avghr,fill=Season))+
+  geom_boxplot()+
+  stat_summary(fun=mean, geom="point", shape=18, size=5, color="black", fill="red")+
+  theme_classicmodify()+
+  labs(y="Average daily heart rate (bpm)")+
+  scale_fill_manual(values=season_palette)+
+  theme(legend.position="none")
+
+ggsave(path=plots, "avghr_fourseasons_box.png",width=6, height=6)
+
+ggplot(seasonhrsite,aes(Season,avgrange,fill=Season))+
+  geom_boxplot()+
+  stat_summary(fun=mean, geom="point", shape=18, size=5, color="black", fill="red")+
+  theme_classicmodify()+
+  labs(y="Average daily range in heart rate (bpm)")+
+  scale_fill_manual(values=season_palette)+
+  theme(legend.position="none")
+
+ggsave(path=plots, "avgrange_fourseasons_box.png",width=6, height=6)
+
+seasonhrstats=seasonhrsite %>% 
+  group_by(Code,Season) %>% 
+  select(c("Code","Season","avghr","avgrange")) %>% 
+  distinct()
+
+#not normal 
+######### Do 4 separate times for each season. If at least 1 not normal then KW. If all normal then ANOVA
+shapiro.test(seasonhrstats$avghr)
+qqPlot(seasonhrsite$avghr)
+
+#test for equal variances
+
+#kruskal wallice test test
+kruskal.test(avghr ~ Season, data=seasonhrstats)
+#p=0.4475, daily average HR doesn't differ across seasons, pooling by site and treatment 
+
+#kruskal wallice test test
+kruskal.test(avgrange ~ Season, data=seasonhrstats)
+#p=0.1039, daily average HR doesn't differ across seasons, pooling by site and treatment 
+
+
+ggplot(seasonhrsite,aes(Season,avghr,fill=Treatment))+
+  geom_bar(position="dodge", stat="summary", fun="mean",col="black")+
+  #geom_errorbar(aes(ymin=avghr-avgse, ymax=avghr+avgse), width=.2,
+               #  position=position_dodge(.9),stat="summary")+ #same thing
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75,position=position_dodge(.9))+
+  theme_classicmodify()+
+  labs(y="Average daily heart rate (bpm)")+
+  scale_fill_manual(values=c("#009E73","chocolate4","#999999"))
+
+ggsave(path=plots, "avghr_treatment_fourseasons.png",width=6, height=6)
+
+ggplot(seasonhrsite,aes(Treatment,hrday_mean,fill=Treatment))+
+  geom_bar(position="dodge", stat="summary", fun="mean",col="black")+
+  #geom_errorbar(aes(ymin=avghr-avgse, ymax=avghr+avgse), width=.2,
+               #  position=position_dodge(.9),stat="summary")+ #same thing
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75,position=position_dodge(.9))+
+  theme_classicmodify()+
+  labs(y="Average daily heart rate (bpm)")+
+  scale_fill_manual(values=c("#009E73","chocolate4","#999999"))
+#different than other treatment graph 
+
+ggplot(seasonhrsite,aes(Season,avghr,fill=Site))+
+  geom_bar(position="dodge", stat="summary", fun="mean",col="black")+
+  #geom_errorbar(aes(ymin=avghr-avgse, ymax=avghr+avgse), width=.2,
+               #  position=position_dodge(.9),stat="summary")+ #same thing
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75,position=position_dodge(.9))+
+  theme_classicmodify()+
+  labs(y="Average daily heart rate (bpm)")+
+  scale_fill_manual(values=sitePalette)
+
+ggsave(path=plots, "avghr_site_fourseasons.png",width=6, height=6)
+
+###############
+#HR range
+ggplot(seasonhrsite,aes(Season,avgrange,fill=Season))+
+  geom_bar(position="dodge", stat="summary", fun="mean",col="black")+
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75)+
+  theme_classicmodify()+
+  labs(y="Average daily range in heart rate (bpm)")+
+  scale_fill_manual(values=season_palette)+
+  theme(legend.position="none")
+
+ggsave(path=plots, "avgrange_fourseasons.png",width=6, height=6)
+
+ggplot(seasonhrsite,aes(Season,avgrange,fill=Treatment))+
+  geom_bar(position="dodge", stat="summary", fun="mean",col="black")+
+  #geom_errorbar(aes(ymin=avghr-avgse, ymax=avghr+avgse), width=.2,
+               #  position=position_dodge(.9),stat="summary")+ #same thing
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75,position=position_dodge(.9))+
+  theme_classicmodify()+
+  labs(y="Average daily range in heart rate (bpm)")+
+  scale_fill_manual(values=c("#009E73","chocolate4","#999999"))
+
+ggsave(path=plots, "rangehr_treatment_fourseasons.png",width=6, height=6)
+
+ggplot(seasonhrsite,aes(Season,avgrange,fill=Site))+
+  geom_bar(position="dodge", stat="summary", fun="mean",col="black")+
+  #geom_errorbar(aes(ymin=avghr-avgse, ymax=avghr+avgse), width=.2,
+               #  position=position_dodge(.9),stat="summary")+ #same thing
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75,position=position_dodge(.9))+
+  theme_classicmodify()+
+  labs(y="Average daily range in heart rate (bpm)")+
+  scale_fill_manual(values=sitePalette)
+
+ggsave(path=plots, "avgrange_site_fourseasons.png",width=6, height=6)
+```
+
+#precip
+```{r}
+#get culm rainfall per day
+precip[is.na(precip)] <- 0
+
+#only pull out 00:53:00 numbers from precip
+precip53 <- subset(precip, format(precip$DateTimeUTC, "%M") %in% c('53'))
+
+#average of precip per day
+precipday=precip53 %>%
+    group_by(day = floor_date(DateTimeUTC, unit = "day")) %>%
+  summarise(day_mean = mean(Precip1hr.mm, na.rm=T),
+            sd = sd(Precip1hr.mm, na.rm=T),
+            n = n())
+
+#get sum of precip per day
+precipsumday=precip53 %>%
+  summarise_by_time(
+    .date_var=DateTimeUTC,
+    .by= "day", 
+    precipday = sum(Precip1hr.mm, na.rm=T))
+
+hrvarday$DateTimeUTC=hrvarday$day
+hrprecip=merge(hrvarday,precipsumday,by="DateTimeUTC")
+hrprecip=merge(hrprecip,temphallseasonprecip, by="DateTimeUTC")
+
+precipplot=ggplot(hrprecip, aes(x=DateTimeUTC,y=precipday)) +
+  geom_bar(stat="summary",position="dodge",fun="sum", size=1, color="black") + 
+  theme_classicmodify()+
+    theme(
+    axis.title.y = element_text(color = "black"),
+    plot.margin = margin(10, 30, 10, 10),
+    #axis.text.x=element_text(size=15, angle=20,hjust=0,vjust=0.2),
+    axis.title.y.right = element_text(color = "black"))+
+  labs(x="Date",y="Precipitation (mm)",tag = "D")+
+  scale_x_datetime(breaks = seq(as.POSIXct("2022-07-01"), as.POSIXct("2023-07-01"), by="90 days"), date_labels = "%b %Y")
+
+hrplot=ggplot(hrprecip, aes(x=DateTimeUTC,y=hrday_mean)) +
+  geom_line(size=1,col="red") + 
+  theme_classicmodify()+
+    theme(
+    axis.title.y = element_text(color = "black"),
+    plot.margin = margin(10, 30, 10, 10))+
+  labs(x="Date",y="Average daily heart rate (bpm)",tag = "A")+
+  scale_x_datetime(breaks = seq(as.POSIXct("2022-07-01"), as.POSIXct("2023-07-01"), by="90 days"), date_labels = "%b %Y")
+
+gapeplot=ggplot(hrprecip, aes(x=DateTimeUTC,y=meanpercentopen)) +
+  geom_line(size=1,col="blue") + 
+  theme_classicmodify()+
+    theme(
+    axis.title.y = element_text(color = "black"),
+    plot.margin = margin(10, 30, 10, 10))+
+  labs(x="Date",y="Proportion of open valves",tag = "C")+
+  scale_x_datetime(breaks = seq(as.POSIXct("2022-07-01"), as.POSIXct("2023-07-01"), by="90 days"), date_labels = "%b %Y")
+
+rangeplot=ggplot(hrprecip, aes(x=DateTimeUTC,y=hrday_var)) +
+  geom_line(size=1,col="purple") + 
+  theme_classicmodify()+
+    theme(
+    axis.title.y = element_text(color = "black"),
+    plot.margin = margin(10, 30, 10, 10))+
+  labs(x="Date",y="Average daily heart rate range (bpm)",tag = "B")+
+  scale_x_datetime(breaks = seq(as.POSIXct("2022-07-01"), as.POSIXct("2023-07-01"), by="90 days"), date_labels = "%b %Y")
+
+figure=ggarrange( 
+           hrplot+ 
+            theme(axis.text.x = element_blank(),
+                  #axis.title.y = element_text(angle = 45, vjust = 1, hjust=1),
+                  axis.ticks.x = element_blank(),
+                  axis.title.x = element_blank(),
+                  axis.text=element_text(size=12),
+                  axis.title=element_text(size=11)),
+           rangeplot+
+             theme(axis.text.x = element_blank(),
+                    #axis.title.y = element_text(angle = 45, vjust = 1, hjust=1),
+                  axis.ticks.x = element_blank(),
+                  axis.title.x = element_blank(),
+                  axis.text=element_text(size=12),
+                  axis.title=element_text(size=10)),
+          gapeplot+ 
+            theme(axis.text.x = element_blank(),
+                  # axis.title.y = element_text(angle = 45, vjust = 1, hjust=1),
+                  axis.ticks.x = element_blank(),
+                  axis.title.x = element_blank(),
+                  axis.text=element_text(size=8),
+                  axis.title=element_text(size=12)),
+          precipplot+
+            theme(axis.text=element_text(size=13),
+                  # axis.title.y = element_text(angle = 45, vjust = 1, hjust=1),
+                  axis.title=element_text(size=13)), nrow=4, ncol=1)
+
+ggsave(plot=figure,"preciphrgapetest.png",path=plots,height=9, width=6)
+
+
+
+# Generate 4 different sets of outputs
+y <- list(hrprecip$precipday,hrprecip$hrday_mean,hrprecip$meanpercentopen, hrprecip$hrday_var)
+
+# Colors for y[[2]], y[[3]], y[[4]] points and axes
+colors = c("red", "blue", "green")
+
+labels=c("Average daily heart rate (bpm)","Proportion of open valves","Average daily heart rate range (bpm)")
+
+# The side for the axes.  The next one will go on
+# the left, the following two on the right side
+sides <- list(4, 4)
+
+# The number of "lines" into the margin the axes will be
+lines <- list(NA, 2)
+
+#graph 
+png(paste0(plots,"precip_hr_gape.png"), width = 8, height = 6, units = 'in', res = 300)
+
+# Set the margins of the plot wider
+par(oma = c(0, 0, 0, 6))
+#bottom, left, top, right
+  plot(hrprecip$DateTimeUTC, y[[1]], yaxt = "n", xlab = "Date",type="n",cex.lab=1.25, cex.axis=1,ylab="Precipitation (mm)")
+# We use the "pretty" function go generate nice axes
+axis(at = pretty(y[[1]]), side = 2)
+
+  par(new = TRUE)
+  plot(hrprecip$DateTimeUTC, hrprecip$hrday_mean, axes = FALSE, col = "red", xlab = "", ylab = "",type="n")
+  axis(side = 4, line = NA,col = "red",at = pretty(hrprecip$hrday_mean))
+  mtext("Average daily heart rate\n (bpm)", side=4, line=3, cex.lab=1,las=3, col="red")
+  lines(hrprecip$DateTimeUTC, hrprecip$hrday_mean, col = adjustcolor("red", alpha = 0.4),lwd=1.5)
+  
+  par(new = TRUE)
+  plot(hrprecip$DateTimeUTC, hrprecip$meanpercentopen, axes = FALSE, col = "blue", xlab = "", ylab = "",type="n")
+  axis(side = 4, line = 5,col = "blue",at = pretty(hrprecip$meanpercentopen))
+  mtext("Proportion of open valves", side=4, line=7, cex.lab=1,las=3, col="blue")
+  lines(hrprecip$DateTimeUTC, hrprecip$meanpercentopen, col = adjustcolor("blue", alpha = 0.4),lwd=1.5)
+  
+  par(new=TRUE)
+  plot(hrprecip$DateTimeUTC,hrprecip$precipday, axes=FALSE, xlab = "Date",type="n",cex.lab=1.25, cex.axis=1,ylab="Precipitation (mm)")
+lines(hrprecip$DateTimeUTC, hrprecip$precipday,lwd=1.5, col=adjustcolor("black", alpha = 0.4))
+
+dev.off()
+
+
+coeff=1/3
+
+precipplot=ggplot(hrprecip, aes(x=DateTimeUTC)) +
+  geom_bar(aes(y=precipday), stat="summary",position="dodge",fun="sum", size=1, color="black", alpha=.4) + 
+  labs(tag = "A")+
+  geom_line(aes(y=hrday_mean/coeff), size=1,alpha=0.6,col="red") +
+  scale_y_continuous(
+    # Features of the first axis
+    name = "Precipitation (mm)",
+    # Add a second axis and specify its features
+    sec.axis = sec_axis(~.*coeff, name="Average heart rate per day (bpm)"))+
+  #theme_classicmodify()+
+  theme_classicmodifygrid()+
+    theme(
+    axis.title.y = element_text(color = "black"),
+    axis.title.y.right = element_text(color = "red")) 
+
+ggsave("precip_hr.png",path=plots,dpi = 500, width = 9, height = 4, units = "in")
+
+coeff=3
+
+ggplot(hrprecip, aes(x=DateTimeUTC)) +
+  geom_line(aes(y=hrday_mean), size=1,alpha=0.6,col="red") +
+  geom_bar(aes(y=precipday/coeff), stat="summary",position="dodge",fun="sum", size=1, color="blue", alpha=.4) + 
+  scale_y_continuous(
+    # Features of the first axis
+    name = "Average heart rate per day (bpm)",
+    # Add a second axis and specify its features
+    sec.axis = sec_axis(~.*coeff, name="Precipitation (mm)"))+
+  theme_classicmodifygrid()+
+    theme(
+    axis.title.y = element_text(color = "red"),
+    axis.title.y.right = element_text(color = "blue")) +
+  scale_x_datetime(limits = as.POSIXct(strptime(c("2023-01-01 00:00:00", "2023-04-01 00:00:00"), 
+                   format = "%Y-%m-%d %H:%M")))
+
+ggsave("precip_hr_zoom.png",path=plots, height=6, width=6)
+
+coeff2=1/55
+
+gapeplot=ggplot(hrprecip, aes(x=DateTimeUTC)) +
+  geom_bar(aes(y=precipday), stat="summary",position="dodge",fun="sum", size=1, color="black", alpha=.4) +
+  labs(x="Date",tag = "B")+
+  geom_line(aes(y=meanpercentopen/coeff2), size=1,alpha=0.6,col="blue") +
+  scale_y_continuous(
+    # Features of the first axis
+    name = "Precipitation (mm)",
+    # Add a second axis and specify its features
+    sec.axis = sec_axis(~.*coeff2, name="Proportion of open valves"))+
+  theme_classicmodifygrid()+
+    theme(
+    axis.title.y = element_text(color = "black"),
+    axis.title.y.right = element_text(color = "blue")) 
+
+ggarrange( 
+           precipplot+ 
+            theme(axis.text.x = element_blank(),
+                  #axis.title.y = element_text(angle = 45, vjust = 1, hjust=1),
+                  axis.ticks.x = element_blank(),
+                  axis.title.x = element_blank(),
+                  #axis.text=element_text(size=12),
+                  axis.title=element_text(size=15)),
+           gapeplot+
+             theme(#axis.text.x = element_blank(),
+                    #axis.title.y = element_text(angle = 45, vjust = 1, hjust=1),
+                  #axis.ticks.x = element_blank(),
+                  #axis.title.x = element_blank(),
+                  #axis.text=element_text(size=12),
+                  axis.title=element_text(size=15)), nrow=2, ncol=1)
+
+ggsave("preciphrgapehrfacet.png",path=plots,height=9, width=6)
+```
+
+#HR vs gapepercent
+```{r}
+ggplot(allhrgapemeta, aes(hallpercent, finalBPM))+
+  geom_smooth()+
+  theme_classicmodify()+
+  labs(x="Percent gape (%)",y="Heart rate (bpm)")+
+  xlim(0,100)+
+  ylim(0,16)
+
+ggscatter(allhrgapemeta, x = "hallpercent", y = "finalBPM", 
+          add = "reg.line", conf.int = TRUE, 
+          cor.coef = TRUE, cor.method = "pearson")
+
+
+#check normality
+shapiro.test(allhrgapemeta$hallpercent)
+
+
+ggsave("hr_percentgape.png",path=plots, height=6, width=6)
+
+ggplot(allhrgapemeta, aes(hallpercent, finalBPM,col=Treatment))+
+  geom_smooth()+
+  theme_classicmodify()+
+  labs(x="Percent gape (%)",y="Heart rate (bpm)")+
+  xlim(0,100)+
+  scale_color_manual(values=c("#009E73","#999999","chocolate4"))+
+  ylim(0,16)
+
+ggsave("hr_percentgape_treat.png",path=plots, height=6, width=6)
+
+ggplot(allhrgapemeta, aes(hallpercent, finalBPM,col=Site))+
+  geom_smooth()+
+  theme_classicmodify()+
+  labs(x="Percent gape (%)",y="Heart rate (bpm)")+
+  xlim(0,100)+
+  scale_color_manual(values=sitePalette)+
+  ylim(0,16)
+
+ggsave("hr_percentgape_site.png",path=plots, height=6, width=6)
+
+allhrgapemeta %>%
+  mutate(Season = case_when( #new variable
+      DateTime >= "2022-07-15 00:00:00" & DateTime <= "2022-09-30 23:59:00" ~ "Summer", #define condition for factor levels
+      DateTime >="2022-10-01 00:00:00" & DateTime <= "2022-12-31 23:59:00" ~ "Fall",
+      DateTime >= "2023-01-01 00:00:00" & DateTime <= "2023-03-31 23:59:00" ~ "Winter",
+      DateTime >= "2023-04-01 00:00:00" & DateTime <= "2023-06-19 23:59:00" ~ "Spring",
+      TRUE ~ NA)) %>% #display error if a value is not assigned to one of the previous groups
+    filter(!is.na(Season)) %>% 
+    mutate_if(is.character, as.factor) %>% 
+    mutate(Season = fct_relevel(Season,c("Fall", "Winter", "Spring", "Summer"))) %>% 
+  ggplot(aes(hallpercent, finalBPM,col=Season))+
+  geom_smooth()+
+  theme_classicmodify()+
+  labs(x="Percent gape (%)",y="Heart rate (bpm)")+
+  xlim(0,100)+
+  scale_color_manual(values=season_palette)+
+  ylim(0,16)
+
+ggsave("hr_percentgape_season.png",path=plots, height=6, width=6)
+
+#mixed effects logistic regression 
+# estimate the model and store results in m
+#tried for a really long time and never went through
+m <- glmer(binary ~ finalBPM + Site+Treatment+ (1 | Code), data = allhrgapemeta, family = binomial, control = glmerControl(optimizer = "bobyqa"), nAGQ = 10)
+
+# print the mod results without correlations among fixed effects
+print(m, corr = FALSE)
+
+model<-lme(binary~ finalBPM + Site+Treatment, random = ~1|Code, data = allhrgapemeta, na.action = na.omit)
+
+#residuals
+plot(model)
+qqnorm(resid(model,type="normalized"))
+#doesn't look normal
+
+model=lme(log(binary+1)~ finalBPM + Site+Treatment, random = ~1|Code, data = allhrgapemeta, na.action = na.omit)
+#doesn't help
+
+options(contrasts = c("contr.sum","contr.poly")) 
+
+model<-lme (binary~ finalBPM + Site+Treatment, random = ~1|Code, data = allhrgapemeta,method="ML", na.action = na.omit)
+
+Anova(model,type="3")
+
+options(contrasts = c("contr.treatment","contr.treatment"))
+
+ggplot(data = allhrgapemeta, 
+       aes(x = finalBPM, y = binary)) +
+  geom_line(size = 1)+
+  #labs(x="Water temperature (°C)", y="Gape binary (0=closed, 1=open)")+
+  theme_classicmodify()+
+  ylim(0,1)
+
+
+```
+
+#HR vs code
+```{r}
+allhrgapemeta$Code=as.factor(allhrgapemeta$Code)
+
+ggplot(allhrgapemeta, aes(Code, finalBPM,fill=Code))+
+  geom_bar(position="dodge", stat="summary", fun="mean",col="black")+
+  stat_summary(fun.data = mean_se, geom = "errorbar", width = 0.2, size = 0.75,position=position_dodge(.9))+
+  theme_classicmodify()+
+  labs(x="Code",y="Heart rate (bpm)")
+
+ggsave("finalbpm_code.png",path=plots, width=10, height=6)
+
+```
+
+#ANOVA attempts HR vs gape binary vs precip
+```{r}
+
+#get number of gape obvs per oyster per day and get the number of open gapes
+temphallseasonday2=fourseasons %>% 
+  dplyr::select(-c(Alive)) %>% 
+  distinct() %>% 
+  group_by(day = floor_date(DateTime, unit = "day")) %>% #make month column 
+  group_by(Treatment,Site,Season,day,Code) %>% 
+  mutate(data_obvs = n(),
+         sum_open=sum(binary),
+         tempavg=mean(Temp.C)) %>% 
+  filter(data_obvs>1260) %>%  #at least full day of observations (including maintenance periods)
+  dplyr::select(-c(DateTime,Hall,Temp.C,Battery.V,SN,hallpercent,binary)) %>% 
+    distinct() %>% 
+  filter_at(vars(sum_open, data_obvs), all_vars(!is.na(.)))
+#data_obvs=total observeration, sum_binary= total successes (when oysters are open)
+  #count(binary) %>% 
+  #mutate(percentopen=n/sum(n))
+  #filter(binary=="1") %>% 
+  #select(-"binary") %>% 
+  #ungroup()
+
+#seasonhr = subset(seasonhr, select = -X )
+
+#merge percent open and hr together
+hrgapeprecip=merge(temphallseasonday2, seasonhr, by=c("day","Code","Treatment","Site","Season"))
+
+#make precip data have yes and no for rained or did not rain each day. Make so that Yes if rained previous day
+precipanova=precipsumday %>%
+  arrange(DateTimeUTC) %>% 
+   mutate(
+     rain = 
+       dplyr::case_when(
+        precipday > 0 |lag(precipday) > 0 ~ "Yes",
+        lag(precipday)<=0 |precipday <= 0 ~ "No")) %>%
+  rename(day=DateTimeUTC) %>% 
+  distinct()
+
+precipanova$rain=as.factor(precipanova$rain)
+    
+#merge with precip data
+hrgapeprecip2=merge(hrgapeprecip, precipanova, by=c("day"))
+hrgapeprecip2=hrgapeprecip2 %>% distinct()
+################
+#try betareg? for proportion data
+
+#try changing percentopen 1s to 0.99999
+#hrgapeprecip9=hrgapeprecip2 %>% 
+#  mutate(percentopen=replace(percentopen,percentopen==1, 0.9999999)) 
+
+#betareg
+# mod <- betareg(I(sum_open/data_obvs) ~ rain + Treatment + Site, data = hrgapeprecip2, link = "logit",na.action=na.omit)
+# plot(mod)
+# summary(mod)
+
+#try with glmer not betareg
+# mod=glmer(sum_open~rain + Treatment + Site + (1|Code), 
+#            data=hrgapeprecip2,weight=data_obvs,family="poisson")
+# 
+# mod=glmer(I(sum_open/data_obvs)~rain + Treatment + Site + (1|Code), 
+#            data=hrgapeprecip2,family="binomial")
+
+##################################################
+######## gape model 
+mod=glmer(cbind(sum_open, (data_obvs-sum_open)) ~ rain + Treatment + Site + tempavg +(1|Code), data=hrgapeprecip2,family="binomial")
+
+plot(mod)
+summary(mod)
+Anova(mod,type="III")
+
+library("DHARMa")
+
+testDispersion(mod) #0.76 not overdispersed
+
+simulationOutput <- simulateResiduals(fittedModel = mod, plot = F)
+plot(simulationOutput) #warning to test outliers with bootstrapping
+
+#test outliers with bootstrap
+testOutliers(simulationOutput, type = c("bootstrap"), nBoot = 100, plot = T)
+#p=0.08 so fail to reject the null hyp that the model is correct. Not an excess nor lack of outliers. Not overdispersed nor underdispersed. 
+
+############################################
+### Heart rate model
+#negative binomial glmms to fix overdispersion
+modhr=glmer.nb(hrday_mean~rain + Treatment + Site + tempavg + (1|Code), 
+           data=hrgapeprecip2)
+
+summary(modhr)
+Anova(modhr, type="III")
+plot(modhr)
+testDispersion(modhr) #no longer overdispersed 
+simulationOutput <- simulateResiduals(fittedModel = modhr, plot = F)
+plot(simulationOutput) #not normal
+
+testOutliers(simulationOutput, type = c("bootstrap"), nBoot = 100, plot = T)
+testDispersion(modhr, type = "DHARMa")
+testDispersion(modhr, type = "PearsonChisq")
+
+
+modhrvar=glmer.nb(hrday_var~Treatment + rain+Site + (1|Code), 
+           data=hrgapeprecip2)
+
+summary(modhrvar)
+Anova(modhrvar, type="III")
+plot(modhrvar)
+testDispersion(modhrvar) #no longer overdispersed 
+simulationOutput <- simulateResiduals(fittedModel = modhrvar, plot = F)
+plot(simulationOutput) #not normal
+
+testOutliers(simulationOutput, type = c("bootstrap"), nBoot = 100, plot = T)
+
+
+#######################################
+############# 
+#hr plus gape model. Use gape binary data. 
+temphallseasonday3=fourseasons %>% 
+  dplyr::select(-c(Alive)) %>% 
+  distinct() %>% 
+  group_by(day = floor_date(DateTime, unit = "day")) %>% #make month column 
+  group_by(Treatment,Site,Season,day,Code) %>% 
+  mutate(data_obvs = n()) %>% 
+  filter(data_obvs>1260) %>%  #at least full day of observations (including maintenance periods)
+  dplyr::select(-c(Hall,Temp.C,Battery.V,SN,hallpercent,data_obvs)) %>% 
+  distinct()
+
+seasonhr=seasonhr %>% distinct()
+
+#merge percent open and hr together
+hrgapeprecip3=merge(temphallseasonday3, seasonhr, by=c("day","Code","Treatment","Site","Season"))
+
+precipanova=precipanova %>% distinct()
+    
+#merge with precip data
+hrgapeprecip4=merge(hrgapeprecip3, precipanova, by=c("day"))
+hrgapeprecip4=hrgapeprecip4 %>% distinct()
+
+modhragpe=glmer(hrday_mean ~ binary + rain + Treatment + Site + (1|Code), data=hrgapeprecip4,family="poisson")
+
+#modhragpe=glmer(hrday_mean ~ binary + (1|Code), data=hrgapeprecip4,family="poisson")
+
+#negative binomial bc binary data
+#modhrgape=glmer(finalBPM ~ binary + (1|Code),data=allhrgapemeta, family="inverse.gaussian")
+
+plot(modhrgape)
+summary(modhrgape)
+Anova(modhrgape,type="III")
+
+testDispersion(modhrgape) #0.76 not overdispersed
+
+simulationOutput <- simulateResiduals(fittedModel = mod, plot = F)
+plot(simulationOutput) #warning to test outliers with bootstrapping
+
+#test outliers with bootstrap
+testOutliers(simulationOutput, type = c("bootstrap"), nBoot = 100, plot = T)
+#p=0.08 so fail to reject the null hyp that the model is correct. Not an excess nor lack of outliers. Not overdispersed nor underdispersed. 
+
+
+#modhr=glmer(hrday_mean~rain + Treatment + Site + (1|Code), 
+  #         data=hrgapeprecip2,family="inverse.gaussian")
+#can't do quasipoisson, gamma, or inverse.gaussian with glmer
+
+#If doesn't look good then maybe switch to glmer and family=poisson.  hrday_mean ~ Treatment + rain + Site + (1| Code), data = hrgapeprecip2, family = poisson or quasipoisson or Gamma or inverse.gaussian. 
+
+#When considering other factors (rain, treatment) there is a difference among sites. Oysters are less open when it rains than when it doesn't rain (Estimate is negative. No rain is ref. When it does rain, estimate drops compared to no rain). Oysters more open in oyster/eelgrass than mud. oysters are less open in PCH than DA. 
+
+Anova(mod,type="III") #put in paper. Fit logit link betaregression to percent open vs rain, site, treatment. Ran Anova on rain, treatment, site and were significant. Then look at post-hoc linear comparisons emmeans on treatments and rain conditions to see how they were different. Site is supposed to be replicates, relatively close, site shouldn't be driving factor so didn't include in post-hoc. Need to run mixed effects model with betareg bc need mixed effects model for repeated measures. Using betareg becaues looking at proportion data. 
+    
+Post_Hoc <- emmeans (mod, spec = 'Treatment','rain', type = "response")
+summary(Post_Hoc)
+contrast(Post_Hoc, method='pairwise')
+    #Mud different from Eelgrass and Oyster regardless of rain. Estimate is neg so oyster has higher value so mud has lower percent open. Oysters less open in mud regardless of rain. 
+    
+
+#binomial generalized linear mixed model. Now code is random factor. 
+# glmmod=glmer(percentopen ~ Treatment + rain + Site + (1| Code), data = hrgapeprecip9, family = binomial)
+#issue with non-integer in a binomial glm
+
+# summary(glmmod)
+
+#################################
+# anovagape<- aov(hrday_mean ~ percentopen + rain + Treatment + Site, data = hrgapeprecip2) 
+# autoplot(anovagape) #not normal, all look bad
+# 
+# anovagape<- aov(log(hrday_mean+1)  ~ percentopen + rain + Treatment + Site, data = hrgapeprecip2) 
+# autoplot(anovagape) #not normal
+# summary(anovagape)
+
+######glm? 
+glm <- glm(hrday_mean ~ rain + Treatment + Site, data = hrgapeprecip2) 
+autoplot(glm) #not normal, all look bad
+
+#try poisson 
+pois.glm <- glm(hrday_mean ~ rain + Treatment + Site, data = hrgapeprecip2, family = poisson) 
+summary(pois.glm) #results make the most sense. But residual deviance is not 1:1 ratio with df
+
+autoplot(pois.glm,which=1:2)
+#doesn't look like a good fit?
+#quasipoisson makes it worse
+
+pois.glm <- glm(log(percentopen+1) ~ rain + Treatment + Site, data = hrgapeprecip2, family = poisson) 
+summary(pois.glm) #only intercept is sig now. plots still look like not good fit
+
+autoplot(pois.glm,which=1:2)
+
+#try Type 3?? Type3 is the best test since we know the data is unbalanced and there is an interaction between the variables after switching the variables in the quasipoisson model??
+options(contrasts=c("contr.sum", "contr.poly"))
+model3<-lm(percentopen ~ rain + Treatment + Site, data = hrgapeprecip2)
+Anova(model3, type=3)
+#all sig so def not right
+options(contrasts=c("contr.treatment", "contr.poly"))
+
+#########
+#Try repeated measures method
+#+time-> time factor is fixed. random is thing that got measured multiple times (grouping), need to be clear about na's with lme()
+repeatedmodel<-lme(hrday_mean~rain*Treatment*Site+day, data=hrgapeprecip2, na.action=na.omit) #error
+
+plot(repeatedmodel) #heteroscedastic (non constant variance). Switch to poisson glm with counts but can't do here because not counts (densities).
+
+#don't try and log bc numbers only go up to 16 max 
+repeatedmodel2<-lme(hrday_mean~Treatment*Site+percentopen, random = ~1|Code, data=hrgapeprecip2, na.action=na.omit)
+
+plot(repeatedmodel2) #looks better. If doesn't look good then maybe switch to glmer and family=poisson.  hrday_mean ~ Treatment + rain + Site + (1| Code), data = hrgapeprecip2, family = poisson or quasipoisson or Gamma or inverse.gaussian. 
+
+qqnorm(resid(repeatedmodel2,type="normalized"))#looks better
+
+summary(repeatedmodel2) 
+Anova(repeatedmodel2) #try Anova or anova to see if treatment/site/etc are sig predictors
+
+#post-hoc Tukey
+summary(glht(mod,linfct = c("SitePCH = 0","SiteShellmaker = 0","SiteWestcliff = 0","SiteShellmaker = SiteWestcliff")))
+
+##################
+#try repeated measures way with gape as response. 
+#original attempt
+
+options(contrasts=c("contr.sum", "contr.poly")) #set contrasts
+modellog<-lm(hrday_mean~percentopen*Treatment*Site,data=hrgapeprecip2) #linear model of transformed data because continuous
+summary(modellog)
+#check residuals
+autoplot(modellog)
+
+#type 3 ancova for unbalanced dataset and continuous independent variable
+Anova(modellog,type=3)
+options(contrasts=c("contr.treatment", "contr.poly")) #set contrasts back
+summary(modellog)
+
+###############
+#binomial distribution with percentopen 
+
+# binomial.glm <- glm(percentopen ~ rain + Treatment + Site, data = hrgapeprecip2, family = binomial) 
+# summary(beta.glm) #results make the most sense. But residual deviance is not 1:1 ratio with df
+# 
+# autoplot(beta.glm,which=1:2)
+# #doesn't look like a good fit?
+# #quasipoisson makes it worse
+
+#tukey type post hoc for betareg?
+# summary(glht(mod,linfct = c("SitePCH = 0","SiteShellmaker = 0","SiteWestcliff = 0","SiteShellmaker = SiteWestcliff")))
+
+#other post hoc
+# linearHypothesis(mod, c('SiteShellmaker = SitePCH')) #p=0.4646
+# linearHypothesis(mod, c("SiteShellmaker = SiteWestcliff")) #p=0.4707
+# linearHypothesis(mod, c("SiteShellmaker = (Intercept)")) #<2.2e-16
+# linearHypothesis(mod, c("SitePCH = SiteWestcliff")) #0.0001236
+# linearHypothesis(mod, c("SitePCH = (Intercept)")) #2.2e-16
+# linearHypothesis(mod, c("SiteWestcliff = (Intercept)")) #<2.2e-16
+
+#try emmeans post hoc
+    # Post_Hoc <- emmeans (mod, spec = 'Site','Treatment', type = "response")
+    # summary(Post_Hoc)
+    # contrast(Post_Hoc, method='pairwise')
+    # 
+    # Post_Hoc <- emmeans (mod, spec = c('Site','Treatment'),'rain', type = "response")
+    # summary(Post_Hoc)
+    # contrast(Post_Hoc, method='pairwise')
+
+# #######another way 
+# #Build General Linear Model
+# mymodel <- lm(hrday_mean ~ rain + Treatment + Site, data = hrgapeprecip2)
+# 
+# #Confirm assumptions
+# qqnorm(mymodel$residuals)
+# qqline(mymodel$residuals,col='red')
+# 
+# plot(mymodel$fitted.values,mymodel$residuals,xlab='Fitted Values',ylab='Residuals')
+# abline(h=0,col='red')
+# 
+# #View model results
+# summary(mymodel)
+# 
+# #log doesn't work
+# mymodel <- lm(log(hrday_mean+1) ~ rain + Treatment + Site, data = hrgapeprecip2)
+```
+
+#temp correlation
+```{r}
+hrtemp=allhrgapemeta %>%
+  group_by(DateTime= floor_date(DateTime, unit = "day"),Treatment,Site,Code) %>% 
+  mutate(rangebpm=max(finalBPM, na.rm=TRUE)-min(finalBPM, na.rm=TRUE)) %>% 
+  mutate(avg_hr=mean(finalBPM),
+         avg_range=mean(rangebpm),
+         temp_avg=mean(Temp.C))%>% 
+  mutate_if(is.character, as.factor) %>% 
+  dplyr::select(-c(X, hallpercent,finalBPM,rangebpm,binary,Temp.C)) %>% 
+  distinct()
+
+
+
+gapetemptest=allgapemeta %>% 
+  group_by(DateTime2= floor_date(DateTime, unit = "day"),Treatment,Site,Code) %>%
+  mutate(n = n()) %>% 
+  filter(n>1080) %>% 
+  ungroup()
+
+hightidetempgape=merge(gapetemptest,tides, by="DateTime")
+
+hightidetempgape=hightidetempgape %>% 
+  subset(TideHT.m>0.5) %>%  #only use rows where tide height is >0.5
+  group_by(DateTime2= floor_date(DateTime, unit = "day"),Treatment,Site,Code) %>%
+  count(binary) %>% 
+  mutate(prop_open=n/sum(n)) %>% 
+  filter(binary=="1") %>% 
+  ungroup() %>% 
+  dplyr::select(-c(binary,n)) %>% 
+  distinct()
+
+hightidetempgape$DateTime=hightidetempgape$DateTime2
+
+hr_gape_temp_rain=merge(hightidetempgape,precipsumday,by=c("DateTime"))
+
+hr_gape_temp=merge(hrtemp,gapetemp,by=c("Treatment", "Site", "Code","DateTime"))
+
+hr_gape_temp=hr_gape_temp %>% 
+  group_by(DateTime= floor_date(DateTime, unit = "day"),Treatment,Site,Code) %>% 
+  summarise(avg_hr=mean(avg_hr),
+         avg_range=mean(avg_range),
+         temp_avg=mean(temp_avg),
+         prop_open=mean(prop_open))
+
+#precipsumday$DateTime=precipsumday$DateTimeUTC
+
+hr_gape_temp_rain=merge(hr_gape_temp,precipsumday,by=c("DateTime"))
+
+#see if temp and gape correlate
+shapiro_test(hr_gape_temp$prop_open)
+shapiro_test(hr_gape_temp$temp_avg)
+shapiro_test(hr_gape_temp$avg_hr)
+shapiro_test(hr_gape_temp$avg_range)
+#none normal
+
+cor.test(hr_gape_temp$prop_open, hr_gape_temp$temp_avg, method = "kendall")
+#p=<2.2e-16
+
+cor.test(hr_gape_temp$avg_hr, hr_gape_temp$temp_avg, method = "kendall")
+#p=0.1244
+
+cor.test(hr_gape_temp$avg_range, hr_gape_temp$temp_avg, method = "kendall")
+#p=0.07781
+
+ggplot(hr_gape_temp, aes(temp_avg, prop_open))+
+  geom_point()+
+  geom_smooth()+
+  labs(x="Daily average temperature (°C)",y="Proportion of open valves")+
+  theme_classicmodify()
+
+ggplot(hr_gape_temp, aes(temp_avg, avg_range))+
+  geom_point()+
+  geom_smooth()+
+  labs(x="Daily average temperature (°C)",y="Daily average heart rate range (bpm)")+
+  theme_classicmodify()
+
+##############################
+#temp and rainfall correlation
+
+
+shapiro_test(hr_gape_temp_rain$temp_avg)
+shapiro_test(hr_gape_temp_rain$precipday)
+#none normal
+
+cor.test(hr_gape_temp_rain$temp_avg,hr_gape_temp_rain$precipday, method = "kendall")
+#p=<2.2e-16
+
+ggplot(hr_gape_temp_rain, aes(temp_avg, precipday))+
+  geom_point()+
+  geom_smooth()+
+  labs(x="Daily average temperature (°C)",y="Daily average rainfall (mm)")+
+  theme_classicmodify()
+
+ggplot(hr_gape_temp_rain, aes(precipday, prop_open))+
+  geom_point()+
+  geom_smooth()+
+  labs(x="Daily cumulative rainfall (mm)",y="Daily average proportion of open valves")+
+  theme_classicmodify()
+#oysters with data from at least 75% of the day, at high tide. 
+
+cor.test(hr_gape_temp_rain$precipday,hr_gape_temp_rain$prop_open, method = "kendall")
+#p=2.2e-16
+
+ggsave("prop_open_rain.png", path=plots, width=8, height=6)
+```
+
+#quickly see temp differences per oyster
+```{r}
+temprange=allgapemeta %>% 
+  subset(Temp.C>0) %>% #remove the bad data
+  group_by(Code) %>% 
+  summarise(temprange=(max(Temp.C)-min(Temp.C)))
+
+temprange=allgapemeta %>% 
+  subset(Temp.C>0) %>% #remove the bad data
+  group_by(Code,DateTime= floor_date(DateTime, unit = "day")) %>% 
+  summarise(maxtemp=max(Temp.C),
+            mintemp=min(Temp.C),
+            temprange=(max(Temp.C)-min(Temp.C)))
+```
 
 ```{r testheartratefilter, echo=showcode , eval=evalAll}
 # Some manual test code used to develop the 
